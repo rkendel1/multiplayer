@@ -79,7 +79,7 @@ async function conversation(ctx: any, req: any, channel: any): Promise<Context> 
  * while it is a FeltKit member.
  */
 export const add = app.mutation({
-  access: "workspaces.write",
+  access: "agents.manage",
   args: { workspaceId: s.optional(s.string()) },
   returns: s.string(),
   handler: async (ctx) => {

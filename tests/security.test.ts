@@ -332,3 +332,44 @@ test("typing events (app.event) reach only those who can read the conversation",
     assert.equal(got[0]?.typing, true);
   } finally { await http.close(); await t.close(); }
 });
+
+test("guests hold least privilege: only what working inside their conversations needs", async () => {
+  const { t, ada, ws, general } = await setup();
+  const alan = await joinAs(t, ws, ADA, ALAN, "guest");
+  const alanMe = await alan.query(api.me.get, {});
+  await ada.mutation(api.channels.addMembers, { channelId: general, participantIds: [alanMe!.participant!.id] });
+  // Inside a conversation he was added to: read, write, mark read, presence.
+  await alan.mutation(api.messages.send, { channelId: general, text: "hello from a guest" });
+  const list = await alan.query(api.messages.list, { channelId: general });
+  const mine = list.items.find((m) => m.text === "hello from a guest");
+  assert.ok(mine, "the guest's message is in the conversation");
+  await alan.mutation(api.channels.markRead, { channelId: general, seq: mine.seq });
+  await alan.mutation(api.presence.heartbeat, { status: "active" });
+  // Nothing beyond it, refused by the role itself (not narrowed later by the conversation policy).
+  await rejects(alan.mutation(api.channels.create, { name: "guest-made", kind: "public" }), "FORBIDDEN");
+  await rejects(alan.mutation(api.channels.join, { channelId: general }), "FORBIDDEN");
+  await rejects(alan.mutation(api.channels.setTopic, { channelId: general, topic: "x" }), "FORBIDDEN");
+  await rejects(alan.mutation(api.channels.addMembers, { channelId: general, participantIds: [alanMe!.participant!.id] }), "FORBIDDEN");
+  await rejects(alan.mutation(api.channels.openConversation, { participantIds: [alanMe!.participant!.id] }), "FORBIDDEN");
+  await rejects(alan.query(api.agents.plans, {}), "FORBIDDEN");
+  await rejects(alan.query(api.activity.list, {}), "FORBIDDEN");
+  await rejects(alan.mutation(api.agents.add, {}), "FORBIDDEN");
+  await rejects(alan.mutation(api.demo.seed, {}), "FORBIDDEN");
+  await t.close();
+});
+
+test("the role table is least privilege: no wildcard grants to workspace roles, each role adds to the one below", async () => {
+  const { app } = await import("../feltkit/app.js");
+  const roles = app.options.roles!;
+  const order = ["guest", "member", "admin", "owner"] as const;
+  for (const role of ["guest", "member", "admin"] as const) {
+    assert.ok(!roles[role]!.some((p) => p === "*" || p.endsWith(".*")), `${role} holds no wildcard permission`);
+  }
+  for (let i = 1; i < order.length; i++) {
+    const below = new Set(roles[order[i - 1]!]);
+    assert.ok([...below].every((p) => roles[order[i]!]!.includes(p)), `${order[i]} includes everything ${order[i - 1]} holds`);
+  }
+  // Admin-only and owner-only actions are permissions those roles alone hold.
+  assert.ok(!roles.member!.includes("agents.manage") && roles.admin!.includes("agents.manage"));
+  assert.ok(!roles.admin!.includes("workspaces.seed") && roles.owner!.includes("workspaces.seed"));
+});

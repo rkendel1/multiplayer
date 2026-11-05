@@ -17,7 +17,23 @@
 import { feltkit, s } from "@feltdb/feltkit";
 import { authorize } from "./_authz.js";
 
-const PERSON = ["channels.*", "messages.*", "presence.*", "plans.read", "agents.request", "files.*", "notifications.*", "activity.read", "workspaces.*"];
+/**
+ * Workspace permissions, least privilege first: each role lists exactly what it holds, and each is
+ * the one below it plus more. Nothing is granted broadly and narrowed later; `_authz.ts` adds only the
+ * conversation rules (private channels, DMs, the agent's queue).
+ *
+ *   guest   works inside the conversations it was added to: read, write messages and files there,
+ *           mark read, leave, presence. It cannot see public channels, start conversations, invite
+ *           people into channels, read plans or the workspace activity.
+ *   member  also creates and joins channels, starts DMs and groups, manages channels it is in, reads
+ *           project plans and the workspace activity.
+ *   admin   also adds the room agent and manages members (FeltKit's tenant.members.manage).
+ *   owner   also seeds the sample workspace and renames the workspace (tenant.*).
+ */
+const GUEST = ["workspaces.read", "channels.read", "channels.leave", "channels.markRead", "messages.read", "messages.write", "files.read", "files.write", "presence.write"];
+const MEMBER = [...GUEST, "channels.create", "channels.join", "channels.converse", "channels.manage", "plans.read", "activity.read"];
+const ADMIN = [...MEMBER, "agents.manage", "tenant.members.manage"];
+const OWNER = [...ADMIN, "workspaces.seed", "tenant.*"];
 
 export const app = feltkit({
   name: "multiplayer",
@@ -26,10 +42,10 @@ export const app = feltkit({
     // Every account: its profile and notifications, nothing in any workspace until it works in one.
     person: ["notifications.*"],
     // Workspace roles (auth.tenant.roles), held only in a session working in that workspace.
-    owner: [...PERSON, "tenant.*"],
-    admin: [...PERSON, "tenant.members.manage"],
-    member: PERSON,
-    guest: PERSON,
+    owner: OWNER,
+    admin: ADMIN,
+    member: MEMBER,
+    guest: GUEST,
     // The room agent (app.agent "assistant", feltkit/agents.ts): it runs with this role and, in a
     // workspace it is a member of, its membership role "agent"; the channel policy applies to it too.
     agent: ["agents.work", "messages.read", "messages.write", "plans.read", "plans.write", "presence.write", "notifications.send"],

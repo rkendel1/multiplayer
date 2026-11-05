@@ -11,28 +11,31 @@
  * tenant-scoped). Unknown ids and ids the caller may not see are refused alike (NOT_FOUND), so a
  * refusal reveals nothing. A function this policy does not recognise is refused (default deny).
  *
- * What stays here is application semantics: minimum workspace roles for some actions, private
- * channels, direct messages and groups, guests and agents seeing only conversations they were
+ * Who may call which function is decided by the roles (feltkit/app.ts), least privilege per role.
+ * What stays here is application semantics: private channels, direct messages and groups, guests and agents seeing only conversations they were
  * brought into, and the agent queue belonging to its agent. Handlers do not repeat these checks: they
  * use the loaders below (loadWorkspace, loadChannel).
  */
-import { fail, type AuthorizeHook, type AuthorizeRequest } from "@feltdb/feltkit";
+import { fail, type AuthContext, type AuthorizeHook, type AuthorizeRequest, type DatabaseReader, type Doc } from "@feltdb/feltkit";
 import { agentRequests, attachments, channelMembers, channels, messages, participants, sharedObjects, type WorkspaceRole } from "./app.js";
 
-type Doc = any;
-type Tenant = { id: string; name: string; role: string };
+/** Stored records, typed by their collection's declared shape (plus id and version). */
+export type ParticipantDoc = Doc<typeof participants.shape>;
+export type ChannelDoc = Doc<typeof channels.shape>;
+export type ChannelMemberDoc = Doc<typeof channelMembers.shape>;
+
+/**
+ * What the loaders need from a call's context: FeltKit's own auth context and read-only, tenant-scoped
+ * database. Every QueryCtx and MutationCtx satisfies it; nothing wider is accepted.
+ */
 export interface Ctx {
-  auth: { requirePrincipal(): { id: string; type: string; displayName?: string }; tenant: Tenant | null };
-  db: {
-    get(c: any, id: string): Promise<any>;
-    find(c: any, filter?: any, options?: any): Promise<any[]>;
-    query(c: any, request: any): Promise<{ records: any[]; nextCursor?: string; exhausted: boolean }>;
-    count(c: any, filter?: any): Promise<number>;
-  };
+  readonly auth: AuthContext;
+  readonly db: DatabaseReader;
 }
 
 const RANK: Record<WorkspaceRole, number> = { guest: 1, agent: 1, member: 2, admin: 3, owner: 4 };
 
+/** Whether a workspace role ranks at least `min` (for what the UI offers; permissions decide access). */
 export function atLeast(role: string, min: WorkspaceRole): boolean {
   return (RANK[role as WorkspaceRole] ?? 0) >= RANK[min];
 }
@@ -41,11 +44,6 @@ export function atLeast(role: string, min: WorkspaceRole): boolean {
 
 /** Functions that need no workspace: the caller's own profile and inbox. */
 const UNSCOPED = new Set(["me:get", "me:ensure", "me:updateProfile", "inbox:list", "inbox:markRead"]);
-/** Functions that need a minimum role in the workspace. */
-const MIN_ROLE: Record<string, WorkspaceRole> = {
-  "agents:add": "admin", "demo:seed": "owner",
-  "channels:create": "member", "activity:list": "member",
-};
 /** Mutations on a conversation that a caller who has not joined it may make. */
 const NON_MEMBER_WRITES = new Set(["channels:join", "channels:markRead", "channels:leave", "messages:remove"]);
 /** The room agent's run (app.agent, as the agent's principal): only the agent a request was made to works it. */
@@ -82,8 +80,6 @@ export const authorize: AuthorizeHook = async (r) => {
   // A workspaceId argument is never trusted: it must be the session's own workspace.
   if (r.args.workspaceId !== undefined && r.args.workspaceId !== tenant.id) hidden();
   const role = tenant.role;
-  const min = MIN_ROLE[r.function];
-  if (min && !atLeast(role, min)) return { allowed: false, code: "FORBIDDEN", reason: `This needs the ${min} role in this workspace (you are ${role}).` };
   const [me] = await r.db.find(participants, { principalId: r.principal.id });
   if (!me) fail("FAILED_PRECONDITION", "No profile yet: call me:ensure first.");
   const t = (await target(r)) ?? hidden();
@@ -109,11 +105,10 @@ const openToRole = (role: string) => role !== "guest" && role !== "agent";
 const policyGap = (what: string): never => fail("INTERNAL", `authorize admitted a call without ${what}.`);
 
 /** The caller's participant record. */
-export async function me(ctx: Ctx): Promise<Doc> {
+export async function me(ctx: Ctx): Promise<ParticipantDoc> {
   const principal = ctx.auth.requirePrincipal();
   const [p] = await ctx.db.find(participants, { principalId: principal.id });
-  if (!p) fail("FAILED_PRECONDITION", "No profile yet: call me:ensure first.");
-  return p;
+  return p ?? fail("FAILED_PRECONDITION", "No profile yet: call me:ensure first.");
 }
 
 /** The caller's participant, the session's workspace and the caller's role there (FeltKit's). */
@@ -123,16 +118,16 @@ export async function loadWorkspace(ctx: Ctx) {
 }
 
 /** A conversation, with the caller's participant, workspace role and channel membership (null if not joined). */
-export async function loadChannel(ctx: Ctx, channelId: string) {
-  const channel: Doc = (await ctx.db.get(channels, channelId)) ?? hidden();
+export async function loadChannel(ctx: Ctx, channelId: string): Promise<{ channel: ChannelDoc; participant: ParticipantDoc; role: string; member: ChannelMemberDoc | null }> {
+  const channel = (await ctx.db.get(channels, channelId)) ?? hidden();
   const { participant, role } = await loadWorkspace(ctx);
   const [member] = await ctx.db.find(channelMembers, { channelId, participantId: participant.id });
-  return { channel, participant, role, member: (member ?? null) as Doc | null };
+  return { channel, participant, role, member: member ?? null };
 }
 
 /** The conversations the caller can read in the session's workspace (filters lists and search; not a gate). */
-export async function readableChannels(ctx: Ctx, participantId: string, role: string): Promise<Doc[]> {
-  const all: Doc[] = await ctx.db.find(channels, {});
-  const mine = new Set((await ctx.db.find(channelMembers, { participantId })).map((m: Doc) => m.channelId));
+export async function readableChannels(ctx: Ctx, participantId: string, role: string): Promise<ChannelDoc[]> {
+  const all = await ctx.db.find(channels, {});
+  const mine = new Set((await ctx.db.find(channelMembers, { participantId })).map((m) => m.channelId));
   return all.filter((c) => mine.has(c.id) || (c.kind === "public" && openToRole(role)));
 }

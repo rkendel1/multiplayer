@@ -63,7 +63,7 @@ export const get = app.query({
 });
 
 export const create = app.mutation({
-  access: "channels.write",
+  access: "channels.create",
   args: { workspaceId: s.optional(s.string()), name: s.string({ minLength: 1, maxLength: 80 }), kind: s.enum(["public", "private"]), topic: s.optional(s.string({ maxLength: 250 })) },
   returns: s.string(),
   capability: { name: "channels.create", description: "Create a public or private channel in the session's workspace." },
@@ -81,7 +81,7 @@ export const create = app.mutation({
 });
 
 export const setTopic = app.mutation({
-  access: "channels.write",
+  access: "channels.manage",
   args: { channelId: s.string(), topic: s.string({ maxLength: 250 }) },
   handler: async (ctx, { channelId, topic }) => {
     const { channel } = await loadChannel(ctx, channelId);
@@ -92,7 +92,7 @@ export const setTopic = app.mutation({
 
 /** Join a public channel. Private channels are joined by being added. */
 export const join = app.mutation({
-  access: "channels.write",
+  access: "channels.join",
   args: { channelId: s.string() },
   handler: async (ctx, { channelId }) => {
     const { channel, participant } = await loadChannel(ctx, channelId);
@@ -102,7 +102,7 @@ export const join = app.mutation({
 });
 
 export const leave = app.mutation({
-  access: "channels.write",
+  access: "channels.leave",
   args: { channelId: s.string() },
   handler: async (ctx, { channelId }) => {
     const { channel, member, participant } = await loadChannel(ctx, channelId);
@@ -116,7 +116,7 @@ export const leave = app.mutation({
 
 /** Add workspace members to a channel the caller is in (private channels and groups included). */
 export const addMembers = app.mutation({
-  access: "channels.write",
+  access: "channels.manage",
   args: { channelId: s.string(), participantIds: s.array(s.string(), { minItems: 1, maxItems: 50 }) },
   handler: async (ctx, { channelId, participantIds }) => {
     const { channel, participant } = await loadChannel(ctx, channelId);
@@ -134,7 +134,7 @@ export const addMembers = app.mutation({
 
 /** Open (or find) the direct message or group conversation with exactly these people. */
 export const openConversation = app.mutation({
-  access: "channels.write",
+  access: "channels.converse",
   args: { workspaceId: s.optional(s.string()), participantIds: s.array(s.string(), { minItems: 1, maxItems: 8 }) },
   returns: s.string(),
   capability: { name: "conversations.open", description: "Open a direct message or group conversation with workspace members." },
@@ -157,7 +157,7 @@ export const openConversation = app.mutation({
 
 /** Mark a conversation read up to `seq`. Only moves forward. */
 export const markRead = app.mutation({
-  access: "channels.write",
+  access: "channels.markRead",
   args: { channelId: s.string(), seq: s.number() },
   handler: async (ctx, { channelId, seq }) => {
     const { member } = await loadChannel(ctx, channelId);

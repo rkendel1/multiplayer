@@ -36,7 +36,7 @@ const LAUNCH: Array<[Who, string]> = [
 ];
 
 export const seed = app.mutation({
-  access: "workspaces.write",
+  access: "workspaces.seed",
   args: { workspaceId: s.optional(s.string()) },
   returns: s.string(),
   handler: async (ctx) => {
