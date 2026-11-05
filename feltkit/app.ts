@@ -40,7 +40,11 @@ export const app = feltkit({
   description: "Multiplayer: real-time workspaces for people and agents.",
   roles: {
     // Every account: its profile and notifications, nothing in any workspace until it works in one.
-    person: ["notifications.*"],
+    // "webhooks.emit" lets messages:send raise `message.posted` for endpoints an operator registered.
+    // AppPort Services authorizes each delivery attempt again as the emitter as FeltKit resolves it
+    // then (the account's session roles, without a workspace), as "webhooks.deliver": runtime-internal,
+    // no caller can invoke it. Neither reaches the Webhooks service itself; that is the operator's.
+    person: ["notifications.*", "webhooks.emit", "webhooks.deliver"],
     // Workspace roles (auth.tenant.roles), held only in a session working in that workspace.
     owner: OWNER,
     admin: ADMIN,
@@ -65,9 +69,17 @@ export const app = feltkit({
       { id: "alan", name: "Alan Turing", roles: ["person"] },
     ],
   },
+  // AppPort Services. Each one is operated in Studio (Services), without code:
+  //   webhooks       operators register endpoints for these events; FeltKit signs and retries delivery
+  //                  (people's messages only: FeltKit 0.3.18 cannot deliver events an app.agent emits)
+  //   configuration  variables and credential references per environment (`feltkit config export|import`)
+  //   intelligence   the model provider and model an agent may use (`feltkit model set`)
   services: {
     files: true,
     notifications: { types: ["mention", "agent.replied"] },
+    webhooks: { events: ["message.posted"] },
+    configuration: true,
+    intelligence: true,
   },
 });
 

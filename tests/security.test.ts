@@ -372,4 +372,9 @@ test("the role table is least privilege: no wildcard grants to workspace roles, 
   // Admin-only and owner-only actions are permissions those roles alone hold.
   assert.ok(!roles.member!.includes("agents.manage") && roles.admin!.includes("agents.manage"));
   assert.ok(!roles.admin!.includes("workspaces.seed") && roles.owner!.includes("workspaces.seed"));
+  // Webhooks: an account emits message.posted (and its deliveries are authorized as it); registering
+  // endpoints, reading deliveries and replaying are the operator's alone.
+  for (const role of [...order, "agent"] as const) assert.ok(!roles[role]!.some((p) => p.startsWith("webhooks.")), `${role} holds no webhooks permission`);
+  assert.deepEqual(roles.person!.filter((p) => p.startsWith("webhooks.")).sort(), ["webhooks.deliver", "webhooks.emit"]);
+  assert.ok(roles.operator!.includes("webhooks.*"));
 });

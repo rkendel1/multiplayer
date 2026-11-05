@@ -115,7 +115,10 @@ test("add agent, mention it, agent action persists a project plan and posts a re
     await ada.mutation(api.messages.send, { channelId: ch, text: "I'll write the launch post by Feb 28." });
     await ada.mutation(api.messages.send, { channelId: ch, text: "Risk: SSO vendor is flaky." });
     const ask = await ada.mutation(api.messages.send, { channelId: ch, text: "@assistant summarize this discussion and create a project plan." });
-    assert.deepEqual((await ada.query(api.agents.requests, { channelId: ch })).map((r: any) => r.status), ["pending"]);
+    // One request recorded with the message; the run itself starts after the commit (it may already be done).
+    const queued = await ada.query(api.agents.requests, { channelId: ch });
+    assert.equal(queued.length, 1);
+    assert.ok(["pending", "done"].includes(queued[0].status), queued[0].status);
 
     // FeltKit runs the app.agent after the commit, as the agent (here: wait for it).
     await t.runtime.settleAgents();

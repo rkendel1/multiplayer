@@ -110,6 +110,12 @@ export const send = app.mutation({
       attachments: files.map((f) => ({ id: f.id, name: f.name, size: f.size, contentType: f.contentType })),
     });
     for (const f of files) await ctx.db.patch(attachments, f.id, { messageId: id });
+    // For endpoints an operator registers in Studio (Services → Webhooks). Text leaves the app only
+    // for public channels; private channels, DMs and groups send ids alone.
+    ctx.afterCommit.webhooks.emit("message.posted", {
+      workspaceId: channel.workspaceId, channelId, channelKind: channel.kind, messageId: id, seq, authorId: participant.id,
+      ...(root ? { threadId: root.id } : {}), ...(channel.kind === "public" ? { text: body } : {}), at: now,
+    });
 
     for (const p of mentioned) {
       if (p.id === participant.id) continue;
