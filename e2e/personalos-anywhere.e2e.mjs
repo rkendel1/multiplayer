@@ -10,12 +10,13 @@
  * PersonalOS), creates PersonalOS's bridge session for Multiplayer, then drives Multiplayer and PersonalOS
  * in Chromium as Ada and Grace. Writes screenshots and evidence.json.
  *
- *   PERSONALOS_DIR=../personalOS AUTHBOUNDRY_DIR=../authboundry node e2e/personalos-anywhere.e2e.mjs
+ *   PERSONALOS_DIR=../personalOS node e2e/personalos-anywhere.e2e.mjs
  *
- * AuthBoundry: `cargo build --release --bin authboundry` in AUTHBOUNDRY_DIR, and its bridge's Node
- * dependencies installed there. Resolver comes from PersonalOS's devDependencies (@appport/resolver).
+ * AuthBoundry: the published @authboundry/core PersonalOS pins (`npm ci --prefix tests/authboundry`
+ * in PersonalOS). Resolver: the published @appport/resolver PersonalOS pins (npm ci --prefix tests/resolver there).
  */
 import { spawn, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import os from "node:os";
@@ -26,7 +27,14 @@ const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const POS_DIR = path.resolve(process.env.PERSONALOS_DIR ?? path.join(ROOT, "..", "personalOS"));
-const AB_DIR = path.resolve(process.env.AUTHBOUNDRY_DIR ?? path.join(ROOT, "..", "authboundry"));
+// The real AuthBoundry server: the published @authboundry/core PersonalOS pins in tests/authboundry
+// (npm ci --prefix tests/authboundry there). Its native server is run directly (as PersonalOS's
+// fixture does), with the package's own bridges and PersonalOS's authboundry.flow.
+const AB_HOME = path.join(POS_DIR, "tests", "authboundry");
+const AB_PKG = path.join(AB_HOME, "node_modules", "@authboundry", "core");
+// The binary @authboundry/core bundles for this platform (see PersonalOS tests/fixtures/anywhere.ts: in 1.17.3
+// three of the four @authboundry/core-<platform> packages carry the 1.16.0 binary). AUTHBOUNDRY_CLI_PATH: development only.
+const AB_BIN = process.env.AUTHBOUNDRY_CLI_PATH ?? path.join(AB_PKG, "native", `${process.platform}-${process.arch}`, "authboundry");
 const SHOTS = path.resolve(process.env.SHOTS ?? path.join(ROOT, "e2e", "screenshots", "anywhere"));
 const PORTS = { resolver: 4310, authority: 4410, personalos: 3110, multiplayer: 3217 };
 const MP = `http://localhost:${PORTS.multiplayer}`;
@@ -80,16 +88,19 @@ const until = async (fn, what, timeout = 20000) => {
 
 async function startResolver() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "anywhere-resolver-"));
-  const cli = path.join(POS_DIR, "node_modules", "@appport", "resolver", "dist", "cli.js");
+  const cli = path.join(POS_DIR, "tests", "resolver", "node_modules", "@appport", "resolver", "dist", "cli.js");
   const init = execFileSync(process.execPath, [cli, "init", "--dir", dir, "--tenant", "personalos"], { encoding: "utf8" });
   const adminKey = init.split(/\s+/).find((w) => w.startsWith("app_live_"));
   await start("resolver", process.execPath, [cli, "serve", "--dir", dir, "--port", String(PORTS.resolver), "--host", "127.0.0.1"], { ready: `http://127.0.0.1:${PORTS.resolver}/.well-known/appport` });
   const { ResolverClient } = await import(path.join(POS_DIR, "node_modules", "@appport", "resolver-client", "dist", "index.js"));
   const admin = await ResolverClient.connect({ url: `http://127.0.0.1:${PORTS.resolver}`, apiKey: adminKey, live: false, maxStaleSeconds: 0 });
-  const key = await admin.createKey("personalos");
-  await admin.grant(key.principal, ["read", "write"], "ref://identity/personalos/*");
-  SECRETS.add(adminKey); SECRETS.add(key.secret);
-  return { admin, key: key.secret };
+  // PersonalOS's two keys (feltkit/_resolver.ts there): one that can only read identity links, one that can only write them.
+  const read = await admin.createKey("personalos-resolve");
+  await admin.grant(read.principal, ["read"], "ref://identity/personalos/*");
+  const write = await admin.createKey("personalos-link");
+  await admin.grant(write.principal, ["write"], "ref://identity/personalos/*");
+  SECRETS.add(adminKey); SECRETS.add(read.secret); SECRETS.add(write.secret);
+  return { admin, readKey: read.secret, writeKey: write.secret };
 }
 
 const CAPABILITIES = ["personalos.assistant.converse", "personalos.conversation.read", "personalos.tasks.read", "personalos.tasks.create", "personalos.tasks.update", "personalos.tasks.delete", "personalos.reminders.create", "personalos.memory.read", "personalos.memory.write", "personalos.memory.delete", "personalos.projects.create"];
@@ -97,8 +108,9 @@ const CAPABILITIES = ["personalos.assistant.converse", "personalos.conversation.
 async function startAuthority() {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), "anywhere-authboundry-"));
   const grants = ["identity.read", "identity.write", "principal.read", "principal.write", "policy.read", "policy.write", "agent.read", "agent.write", "delegation.read", "delegation.create", "delegation.revoke", "audit.read", "evidence.read", "authorization.read", "authorization.explain", "session.admin"].flatMap((g) => ["--grant", `authority.${g}=role:owner`]);
-  const env = { AUTHBOUNDRY_PORTAL_ORIGIN: "http://localhost:3001", AUTHBOUNDRY_FELTDB_PATH: data, AUTHBOUNDRY_FELTDB_BRIDGE: path.join(AB_DIR, "bridge", "feltdb-store.cjs"), AUTHBOUNDRY_APPPORT_SERVICES_BRIDGE: path.join(AB_DIR, "bridge", "appport-services.cjs"), FELTDB_URL: "", FELTDB_ENDPOINT: "" };
-  await start("authority", path.join(AB_DIR, "target", "release", "authboundry"), ["serve", path.join(AB_DIR, "authboundry.flow"), "--addr", `127.0.0.1:${PORTS.authority}`, "--tenant", "reference", "--account", "owner:local-password:role=owner@reference", ...grants], { cwd: AB_DIR, env, ready: `http://127.0.0.1:${PORTS.authority}/health` });
+  const env = { AUTHBOUNDRY_PORTAL_ORIGIN: "http://localhost:3001", AUTHBOUNDRY_FELTDB_PATH: data, AUTHBOUNDRY_FELTDB_BRIDGE: path.join(AB_PKG, "bridge", "feltdb-store.cjs"), AUTHBOUNDRY_APPPORT_SERVICES_BRIDGE: path.join(AB_PKG, "bridge", "appport-services.cjs"), AUTHBOUNDRY_NODE: process.execPath, FELTDB_URL: "", FELTDB_ENDPOINT: "" };
+  if (!AB_BIN) throw new Error(`AuthBoundry is not installed: npm ci --prefix ${AB_HOME}`);
+  await start("authority", AB_BIN, ["serve", path.join(AB_HOME, "authboundry.flow"), "--addr", `127.0.0.1:${PORTS.authority}`, "--tenant", "reference", "--account", "owner:local-password:role=owner@reference", ...grants], { cwd: data, env, ready: `http://127.0.0.1:${PORTS.authority}/health` });
   const base = `http://127.0.0.1:${PORTS.authority}`;
   const req = async (p, { method = "GET", credential, body } = {}) => {
     const url = new URL(p, base); url.searchParams.set("tenant", "reference");
@@ -142,7 +154,7 @@ const ref = (name) => ({ name, kind: "query" });
 
 (async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
-  const evidence = { started: new Date().toISOString() };
+  const evidence = { started: new Date().toISOString(), authboundry: { package: "@authboundry/core", version: fs.existsSync(AB_PKG) ? JSON.parse(fs.readFileSync(path.join(AB_PKG, "package.json"), "utf8")).version : null, binary: path.relative(POS_DIR, AB_BIN), sha256: fs.existsSync(AB_BIN) ? createHash("sha256").update(fs.readFileSync(AB_BIN)).digest("hex") : null, ...(process.env.AUTHBOUNDRY_CLI_PATH ? { binaryOverride: "AUTHBOUNDRY_CLI_PATH (development only: not the published binary)" } : {}) } };
   let resolver, authority, bridgeToken;
   try {
     resolver = await startResolver();
@@ -152,7 +164,7 @@ const ref = (name) => ({ name, kind: "query" });
       cwd: POS_DIR,
       // Credentials as custody references (FELTKIT_CREDENTIAL_<ID>): the check credential and the signing
       // secret of interaction.updated; the app code never reads either.
-      env: { FELTKIT_STATE_DIR: posState, RESOLVER_URL: `http://127.0.0.1:${PORTS.resolver}`, RESOLVER_API_KEY: resolver.key, AUTHBOUNDRY_URL: authority.url, FELTKIT_CREDENTIAL_AUTHBOUNDRY_CHECK: authority.checkCredential, FELTKIT_CREDENTIAL_SURFACE_EVENTS: EVENTS_SECRET },
+      env: { FELTKIT_STATE_DIR: posState, RESOLVER_URL: `http://127.0.0.1:${PORTS.resolver}`, FELTKIT_CREDENTIAL_RESOLVER_RESOLVE: resolver.readKey, FELTKIT_CREDENTIAL_RESOLVER_LINK: resolver.writeKey, AUTHBOUNDRY_URL: authority.url, FELTKIT_CREDENTIAL_AUTHBOUNDRY_CHECK: authority.checkCredential, FELTKIT_CREDENTIAL_SURFACE_EVENTS: EVENTS_SECRET },
       ready: `${POS}/api/session`,
     });
     const out = execFileSync("npx", ["feltkit", "session", "create", "--id", "multiplayer", "--role", "bridge", "--type", "service", "--label", "Multiplayer bridge (e2e)"], { cwd: POS_DIR, env: { ...process.env, FELTKIT_STATE_DIR: posState }, encoding: "utf8" });
@@ -252,7 +264,7 @@ const ref = (name) => ({ name, kind: "query" });
     return { reply: text.slice(0, 120) };
   });
 
-  await check(3, "linking (proof of both identities): a code issued in PersonalOS, sent by Ada in a DM in Multiplayer; Resolver records it", async () => {
+  await check(3, "linking (proof of both identities): a code issued in PersonalOS, sent by Ada in a DM in Multiplayer, confirmed by Ada in PersonalOS; Resolver records it", async () => {
     await adaPos.goto(`${POS}/#/settings`);
     await adaPos.getByRole("button", { name: "Connect Multiplayer" }).click();
     const code = (await adaPos.getByTestId("link-code").innerText()).match(/link ([A-Z0-9]{4}-[A-Z0-9]{4})/)[1];
@@ -262,7 +274,15 @@ const ref = (name) => ({ name, kind: "query" });
     await ada.getByRole("checkbox").first().check();
     await ada.getByRole("button", { name: "Open direct message" }).click();
     await say(ada, `link ${code}`, "Message PersonalOS");
-    await ada.getByText(/^Connected\. When you mention me here/).waitFor({ timeout: 20000 });
+    await ada.getByText(/^Almost connected\. Open PersonalOS/).waitFor({ timeout: 20000 });
+    // Nothing is linked until Ada, signed in to PersonalOS, confirms the account that sent the code.
+    if ((await resolver.admin.list("ref://identity/personalos/multiplayer/")).refs.some((r) => r.state === "active")) throw new Error("linked before the owner confirmed");
+    await adaPos.reload();
+    const presented = adaPos.getByTestId("link-presented");
+    await presented.getByText(/\(ada\)/).waitFor();
+    await shot(adaPos, "01a-personalos-confirm-link.png");
+    await presented.getByRole("button", { name: "This is me" }).click();
+    await until(async () => (await resolver.admin.list("ref://identity/personalos/multiplayer/")).refs.some((r) => r.state === "active"), "the identity agent recorded the link");
     const { refs } = await resolver.admin.list("ref://identity/personalos/multiplayer/");
     const active = refs.filter((r) => r.state === "active");
     const value = (await resolver.admin.resolve(active[0].ref)).selected.value;
@@ -282,7 +302,10 @@ const ref = (name) => ({ name, kind: "query" });
     await grace.getByRole("checkbox").first().check();
     await grace.getByRole("button", { name: "Open direct message" }).click();
     await say(grace, `link ${code}`, "Message PersonalOS");
-    await grace.getByText(/^Connected\./).waitFor({ timeout: 20000 });
+    await grace.getByText(/^Almost connected\./).waitFor({ timeout: 20000 });
+    const [presented] = (await posGrace.query({ name: "links:list", kind: "query" }, {})).filter((l) => l.status === "presented");
+    await posGrace.mutation({ name: "links:confirm", kind: "mutation" }, { id: presented.id });
+    await until(async () => (await posGrace.query({ name: "links:list", kind: "query" }, {})).some((l) => l.status === "active"), "Grace's link recorded");
     await grace.getByRole("button", { name: /^#\s*general/ }).click();
   };
 
@@ -471,10 +494,10 @@ const ref = (name) => ({ name, kind: "query" });
     await adaPos.goto(`${POS}/#/settings`);
     await adaPos.getByTestId("connected-surfaces").getByRole("button", { name: "Disconnect" }).click();
     await say(ada, `@personalos add after revoke to my list (${stamp}-v1)`);
-    await threadReply(ada, `${stamp}-v1`, /don't know which PersonalOS account is yours/);
+    // Refused at once: "disconnected" while the identity agent revokes it in Resolver, "don't know" after.
+    await threadReply(ada, `${stamp}-v1`, /was disconnected from PersonalOS|don't know which PersonalOS account is yours/);
     if ((await tasksOf(posAda)).some((x) => /after revoke/i.test(x.title))) throw new Error("revoked identity acted");
-    const states = (await resolver.admin.list("ref://identity/personalos/multiplayer/")).refs.map((r) => r.state);
-    if (!states.includes("revoked")) throw new Error(JSON.stringify(states));
+    const states = await until(async () => { const st = (await resolver.admin.list("ref://identity/personalos/multiplayer/")).refs.map((r) => r.state); return st.includes("revoked") && st; }, "Resolver shows the link revoked");
     return { resolverStates: states };
   });
 
