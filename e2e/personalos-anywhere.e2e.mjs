@@ -16,6 +16,7 @@
  * in PersonalOS). Resolver: the published @appport/resolver PersonalOS pins (npm ci --prefix tests/resolver there).
  */
 import { spawn, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import os from "node:os";
@@ -31,7 +32,9 @@ const POS_DIR = path.resolve(process.env.PERSONALOS_DIR ?? path.join(ROOT, "..",
 // fixture does), with the package's own bridges and PersonalOS's authboundry.flow.
 const AB_HOME = path.join(POS_DIR, "tests", "authboundry");
 const AB_PKG = path.join(AB_HOME, "node_modules", "@authboundry", "core");
-const AB_BIN = process.env.AUTHBOUNDRY_CLI_PATH ?? [path.join(AB_HOME, "node_modules", "@authboundry", `core-${process.platform}-${process.arch}`, "bin", "authboundry"), path.join(AB_PKG, "native", `${process.platform}-${process.arch}`, "authboundry")].find((p) => fs.existsSync(p));
+// The binary @authboundry/core bundles for this platform (see PersonalOS tests/fixtures/anywhere.ts: in 1.17.3
+// three of the four @authboundry/core-<platform> packages carry the 1.16.0 binary). AUTHBOUNDRY_CLI_PATH: development only.
+const AB_BIN = process.env.AUTHBOUNDRY_CLI_PATH ?? path.join(AB_PKG, "native", `${process.platform}-${process.arch}`, "authboundry");
 const SHOTS = path.resolve(process.env.SHOTS ?? path.join(ROOT, "e2e", "screenshots", "anywhere"));
 const PORTS = { resolver: 4310, authority: 4410, personalos: 3110, multiplayer: 3217 };
 const MP = `http://localhost:${PORTS.multiplayer}`;
@@ -151,7 +154,7 @@ const ref = (name) => ({ name, kind: "query" });
 
 (async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
-  const evidence = { started: new Date().toISOString(), authboundry: { package: "@authboundry/core", version: fs.existsSync(AB_PKG) ? JSON.parse(fs.readFileSync(path.join(AB_PKG, "package.json"), "utf8")).version : null, ...(process.env.AUTHBOUNDRY_CLI_PATH ? { binaryOverride: "AUTHBOUNDRY_CLI_PATH (development only: not the published binary)" } : {}) } };
+  const evidence = { started: new Date().toISOString(), authboundry: { package: "@authboundry/core", version: fs.existsSync(AB_PKG) ? JSON.parse(fs.readFileSync(path.join(AB_PKG, "package.json"), "utf8")).version : null, binary: path.relative(POS_DIR, AB_BIN), sha256: fs.existsSync(AB_BIN) ? createHash("sha256").update(fs.readFileSync(AB_BIN)).digest("hex") : null, ...(process.env.AUTHBOUNDRY_CLI_PATH ? { binaryOverride: "AUTHBOUNDRY_CLI_PATH (development only: not the published binary)" } : {}) } };
   let resolver, authority, bridgeToken;
   try {
     resolver = await startResolver();
