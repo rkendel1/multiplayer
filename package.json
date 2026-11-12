@@ -34,7 +34,7 @@
     "test:e2e": "node e2e/multiplayer.e2e.cjs"
   },
   "dependencies": {
-    "@feltdb/feltkit": "0.3.18",
+    "@feltdb/feltkit": "0.3.25",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },

@@ -71,7 +71,7 @@ export const app = feltkit({
   },
   // AppPort Services. Each one is operated in Studio (Services), without code:
   //   webhooks       operators register endpoints for these events; FeltKit signs and retries delivery
-  //                  (people's messages only: FeltKit 0.3.18 cannot deliver events an app.agent emits)
+  //                  (people's messages only: FeltKit 0.3.18 could not deliver events an app.agent emits; not yet re-verified on 0.3.25)
   //   configuration  variables and credential references per environment (`feltkit config export|import`)
   //   intelligence   the model provider and model an agent may use (`feltkit model set`)
   services: {
