@@ -13,7 +13,7 @@
  *   PERSONALOS_DIR=../personalOS node e2e/personalos-anywhere.e2e.mjs
  *
  * AuthBoundry: the published @authboundry/core PersonalOS pins (`npm ci --prefix tests/authboundry`
- * in PersonalOS). Resolver comes from PersonalOS's devDependencies (@appport/resolver).
+ * in PersonalOS). Resolver: the published @appport/resolver PersonalOS pins (npm ci --prefix tests/resolver there).
  */
 import { spawn, execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -85,7 +85,7 @@ const until = async (fn, what, timeout = 20000) => {
 
 async function startResolver() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "anywhere-resolver-"));
-  const cli = path.join(POS_DIR, "node_modules", "@appport", "resolver", "dist", "cli.js");
+  const cli = path.join(POS_DIR, "tests", "resolver", "node_modules", "@appport", "resolver", "dist", "cli.js");
   const init = execFileSync(process.execPath, [cli, "init", "--dir", dir, "--tenant", "personalos"], { encoding: "utf8" });
   const adminKey = init.split(/\s+/).find((w) => w.startsWith("app_live_"));
   await start("resolver", process.execPath, [cli, "serve", "--dir", dir, "--port", String(PORTS.resolver), "--host", "127.0.0.1"], { ready: `http://127.0.0.1:${PORTS.resolver}/.well-known/appport` });
