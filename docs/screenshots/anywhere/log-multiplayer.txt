@@ -1,0 +1,39 @@
+feltkit dev 0.3.25  environment: development
+Schema none → v1 applied (FeltDB now enforces it)
+
+  App        http://localhost:3217
+  Dashboard  http://localhost:3217/_feltkit/#token=[secret]
+  AppPort    http://localhost:3217/appport  (7 capabilities)
+  MCP        http://localhost:3217/mcp  (agents; needs a session from `feltkit session create --type agent`)
+  State      /tmp/anywhere-mp-pQ11MH  (FeltDB 0.21.0, local)
+  Schema     v1 (FeltDB enforces it; just applied: installed)
+  Functions  38 from feltkit/  collections: participants, channels, channelMembers, messages, reactions, attachments, presence, agentRequests, sharedObjects, activity
+
+  Ready in 400ms. Edit feltkit/*.ts to reload. Ctrl+C to stop.
+
+✉ grace@example.com: Ada Lovelace invited you to join Northwind Labs on Multiplayer: real-time workspaces for people and agents.
+    Ada Lovelace invited you to join the workspace "Northwind Labs" on Multiplayer: real-time workspaces for people and agents. as member.
+    
+    Accept the invitation (it works once, for 7 days):
+    http://localhost:3217/#feltkit-invitation=fki_ddaAQ08Ez4yYvTlAda-aFvw-4OePOK1VwLMrr1Rm9Sw
+    
+    If you did not expect this, ignore this e-mail.
+✉ grace@example.com: Sign in to Multiplayer: real-time workspaces for people and agents.
+    Sign in to Multiplayer: real-time workspaces for people and agents. (the link works once, for 15 minutes):
+    http://localhost:3217/#feltkit-magic-link=fkc_NYLoajaPZhCQlGwOnKGkq-e93JJk-9_XZP0MI23_YLQ
+    
+    Or enter this code: 2945 0081
+    
+    If you did not ask to sign in, ignore this e-mail.
+warn after-commit agent personalos from messages:send failed: A record this mutation read changed before it could commit. Nothing was written; it is safe to retry.
+warn after-commit agent personalos from messages:send failed: A record this mutation read changed before it could commit. Nothing was written; it is safe to retry.
+warn after-commit agent personalos from messages:send failed: A record this mutation read changed before it could commit. Nothing was written; it is safe to retry.
+warn after-commit agent personalos from messages:send failed: A record this mutation read changed before it could commit. Nothing was written; it is safe to retry.
+warn after-commit agent personalos from messages:send failed: A record this mutation read changed before it could commit. Nothing was written; it is safe to retry.
+warn after-commit agent personalos from messages:send failed: A record this mutation read changed before it could commit. Nothing was written; it is safe to retry.
+warn after-commit agent personalos from messages:send failed: A record this mutation read changed before it could commit. Nothing was written; it is safe to retry.
+warn after-commit agent personalos from messages:send failed: A record this mutation read changed before it could commit. Nothing was written; it is safe to retry.
+warn after-commit agent personalos from messages:send failed: A record this mutation read changed before it could commit. Nothing was written; it is safe to retry.
+warn after-commit agent personalos from messages:send failed: A record this mutation read changed before it could commit. Nothing was written; it is safe to retry.
+warn after-commit agent personalos from messages:send failed: A record this mutation read changed before it could commit. Nothing was written; it is safe to retry.
+warn after-commit agent personalos from messages:send failed: A record this mutation read changed before it could commit. Nothing was written; it is safe to retry.

@@ -64,7 +64,7 @@ before(async () => {
   stub.url = `http://127.0.0.1:${(server.address() as any).port}`;
   stub.close = () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); });
   process.env.PERSONALOS_URL = stub.url;
-  process.env.PERSONALOS_BRIDGE_TOKEN = TOKEN;
+  process.env.FELTKIT_CREDENTIAL_PERSONALOS_BRIDGE = TOKEN;
   process.env.MULTIPLAYER_INSTANCE = "mp-test";
 });
 after(() => stub.close());
@@ -227,14 +227,14 @@ test("PersonalOS unreachable: retried, then an honest failure that claims nothin
 
 test("a wrong bridge credential is refused by PersonalOS and reported, not retried forever", async () => {
   const { t, ada, general } = await withPersonalOS();
-  const token = process.env.PERSONALOS_BRIDGE_TOKEN;
-  process.env.PERSONALOS_BRIDGE_TOKEN = "stolen-or-stale";
+  const token = process.env.FELTKIT_CREDENTIAL_PERSONALOS_BRIDGE;
+  process.env.FELTKIT_CREDENTIAL_PERSONALOS_BRIDGE = "stolen-or-stale";
   try {
     const m = await ada.mutation(api.messages.send, { channelId: general, text: "@personalos add x to my list" });
     await settle(t, async () => (await ada.query(api.agents.requests, { channelId: general })).some((x: any) => x.phase === "failed"));
     assert.equal(stub.calls.length, 1);
     assert.match((await thread(ada, m.id)).at(-1)!.text, /refused this request \(UNAUTHORIZED\)/);
-  } finally { process.env.PERSONALOS_BRIDGE_TOKEN = token; await t.close(); }
+  } finally { process.env.FELTKIT_CREDENTIAL_PERSONALOS_BRIDGE = token; await t.close(); }
 });
 
 test("membership revoked during an active interaction: the retry re-checks access and sends nothing", async () => {
@@ -310,4 +310,97 @@ test("webhooks on FeltKit 0.3.25: a message.posted emitted by the in-app agent (
     assert.ok(agentPost.headers["x-appport-signature"], "signed");
     assert.equal(new Set(authors).size, 2, "one event from the person, one from the agent");
   } finally { receiver.close(); delete process.env.FELTKIT_CREDENTIAL_MPHOOK; await t.close(); }
+});
+
+// ── M3: events from PersonalOS without a browser; credentials through custody ──
+
+import { createHmac } from "node:crypto";
+
+/** Register PersonalOS as an inbound integration (as an operator would in Studio) and return a signed poster. */
+async function inboundFrom(t: any, server: { url: string }) {
+  process.env.FELTKIT_CREDENTIAL_PERSONALOS_EVENTS = "whsec_personalos_events_secret_0123456789";
+  const operator = { id: "ada", type: "user", roles: ["person", "operator"] };
+  const integration = await t.runtime.services.invoke("webhooks.integrations.register", { provider: "personalos", signingCredentialRef: "credential-ref:personalos-events" }, operator);
+  let n = 0;
+  return async (data: Record<string, unknown>, eventId = `evt-${++n}`) => {
+    const raw = JSON.stringify({ type: "interaction.updated", data });
+    const timestamp = new Date().toISOString();
+    const signature = createHmac("sha256", process.env.FELTKIT_CREDENTIAL_PERSONALOS_EVENTS!).update(`${timestamp}.${raw}`).digest("hex");
+    const r = await fetch(`${server.url}/webhooks/inbound/${integration.id}`, { method: "POST", headers: { "content-type": "application/json", "x-appport-event-id": eventId, "x-appport-timestamp": timestamp, "x-appport-signature": signature }, body: raw });
+    return r.status;
+  };
+}
+
+test("events: an approval decided in PersonalOS reaches the thread with no browser open; a replayed event changes nothing", async () => {
+  const { t, ada, ws, general } = await withPersonalOS();
+  const server = await serve(t);
+  try {
+    stub.next = () => ({ state: "awaiting_approval", reply: "That needs your approval." });
+    const m = await ada.mutation(api.messages.send, { channelId: general, text: "@personalos delete the passport task" });
+    await settle(t);
+    const key = `mp-test:${m.id}`;
+    // Nobody is looking at Multiplayer. Ada approves in PersonalOS; PersonalOS emits interaction.updated.
+    stub.updates.get(key)!.push({ seq: 2, state: "completed", text: "Approved in PersonalOS and done.", at: Date.now() });
+    const post = await inboundFrom(t, server);
+    assert.equal(await post({ adapter: "multiplayer", instance: "mp-test", key, workspaceId: ws, seq: 2, state: "completed" }, "evt-approve"), 202);
+    await settle(t, async () => (await ada.query(api.agents.requests, { channelId: general })).some((x: any) => x.phase === "completed"));
+    // Reopened later: the result is there.
+    assert.deepEqual((await thread(ada, m.id)).map((r: any) => r.text), ["That needs your approval.", "Approved in PersonalOS and done."]);
+    // The same event again: refused as a replay; a different event for the same update: no duplicate post.
+    assert.equal(await post({ adapter: "multiplayer", instance: "mp-test", key, workspaceId: ws, seq: 2, state: "completed" }, "evt-approve"), 409);
+    assert.equal(await post({ adapter: "multiplayer", instance: "mp-test", key, workspaceId: ws, seq: 2, state: "completed" }, "evt-approve-redelivered"), 202);
+    await settle(t);
+    assert.equal((await thread(ada, m.id)).length, 2, "no duplicate message");
+    // Content came over the authenticated bridge (status), never in the event.
+    assert.ok(stub.calls.some((c) => c.name === "interactions:status" && c.auth === `Bearer ${TOKEN}`));
+  } finally { await server.close(); await t.close(); }
+});
+
+test("events: out-of-order and foreign events cannot regress state or reach other workspaces; forged events are refused", async () => {
+  const { t, ada, ws, general, malloryWs } = await withPersonalOS();
+  const server = await serve(t);
+  try {
+    stub.next = () => ({ state: "awaiting_approval", reply: "Needs approval." });
+    const m = await ada.mutation(api.messages.send, { channelId: general, text: "@personalos delete old notes" });
+    await settle(t);
+    const key = `mp-test:${m.id}`;
+    stub.updates.get(key)!.push({ seq: 2, state: "completed", text: "Approved in PersonalOS and done.", at: Date.now() });
+    const post = await inboundFrom(t, server);
+    await post({ adapter: "multiplayer", instance: "mp-test", key, workspaceId: ws, seq: 2, state: "completed" });
+    await settle(t);
+    // A late event for seq 1 arrives after seq 2: state stays completed, nothing reposted.
+    await post({ adapter: "multiplayer", instance: "mp-test", key, workspaceId: ws, seq: 1, state: "awaiting_approval" });
+    await settle(t);
+    const [req] = (await ada.query(api.agents.requests, { channelId: general })).filter((x: any) => x.phase);
+    assert.equal(req.phase, "completed");
+    assert.equal((await thread(ada, m.id)).length, 2);
+    // Another installation's event, or one naming a workspace PersonalOS is not in: nothing happens there.
+    const before = stub.calls.length;
+    await post({ adapter: "multiplayer", instance: "someone-else", key, workspaceId: ws, seq: 3, state: "completed" });
+    await post({ adapter: "multiplayer", instance: "mp-test", key, workspaceId: malloryWs, seq: 3, state: "completed" });
+    await settle(t);
+    assert.equal(stub.calls.length, before, "PersonalOS is not asked about events that do not belong here");
+    // Forged: a wrong signature.
+    const r = await fetch(`${server.url}/webhooks/inbound/not-an-integration`, { method: "POST", headers: { "content-type": "application/json", "x-appport-event-id": "x", "x-appport-timestamp": new Date().toISOString(), "x-appport-signature": "00" }, body: "{}" });
+    assert.equal(r.status, 404);
+  } finally { await server.close(); await t.close(); }
+});
+
+test("credentials: the bridge token is a custody reference used only by the integration; never in requests, records or results", async () => {
+  const { t, ada, general } = await withPersonalOS();
+  try {
+    await ada.mutation(api.messages.send, { channelId: general, text: "@personalos add rotate keys to my list" });
+    await settle(t);
+    assert.equal(stub.calls[0]!.auth, `Bearer ${TOKEN}`);
+    const calls = JSON.stringify(await t.runtime.integrations.calls({ integration: "personalos" }));
+    assert.match(calls, /"state":"succeeded"/, "each call is recorded");
+    assert.ok(!calls.includes(TOKEN), "the token is never recorded");
+    const activity = JSON.stringify(await t.runtime.activity.list());
+    assert.ok(!activity.includes(TOKEN));
+    // Rotation: the next call carries the new token.
+    process.env.FELTKIT_CREDENTIAL_PERSONALOS_BRIDGE = "rotated-bridge-token";
+    await ada.mutation(api.messages.send, { channelId: general, text: "@personalos add second to my list" });
+    await settle(t, async () => stub.calls.length >= 2);
+    assert.equal(stub.calls.at(-1)!.auth, "Bearer rotated-bridge-token");
+  } finally { process.env.FELTKIT_CREDENTIAL_PERSONALOS_BRIDGE = TOKEN; await t.close(); }
 });

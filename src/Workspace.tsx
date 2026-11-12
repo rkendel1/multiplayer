@@ -254,12 +254,10 @@ function PersonalOSRequests({ requests, me, toasts }: { requests: Array<{ id: st
   const cancel = useMutation(api.personalos.cancel);
   const open = requests.filter((r) => r.phase && PHASES[r.phase]);
   const waiting = open.filter((r) => r.phase === "awaiting_approval").map((r) => r.id).join(",");
-  // An approval is decided in PersonalOS; this surface asks for news while someone is looking.
+  // Updates arrive as PersonalOS events (no browser needed). Opening the conversation also asks once
+  // for the authoritative state, for someone returning after an event was missed.
   useEffect(() => {
-    if (!waiting) return;
-    const tick = () => { if (document.visibilityState === "visible") for (const id of waiting.split(",")) void sync({ requestId: id }).catch(() => undefined); };
-    const t = setInterval(tick, 5000);
-    return () => clearInterval(t);
+    for (const id of waiting.split(",").filter(Boolean)) void sync({ requestId: id }).catch(() => undefined);
   }, [waiting]);
   if (!open.length) return null;
   return <>{open.map((r) => (

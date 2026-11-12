@@ -1,0 +1,13 @@
+feltkit dev 0.3.25  environment: development
+Schema none → v1 applied (FeltDB now enforces it)
+
+  App        http://localhost:3110
+  Dashboard  http://localhost:3110/_feltkit/#token=[secret]
+  AppPort    http://localhost:3110/appport  (13 capabilities)
+  MCP        http://localhost:3110/mcp  (agents; needs a session from `feltkit session create --type agent`)
+  State      /tmp/anywhere-pos-EPFP05  (FeltDB 0.21.0, local)
+  Schema     v1 (FeltDB enforces it; just applied: installed)
+  Functions  52 from feltkit/  collections: documents, conversations, messages, memories, tasks, projects, actions, settings, identityLinks, interactions
+
+  Ready in 495ms. Edit feltkit/*.ts to reload. Ctrl+C to stop.
+

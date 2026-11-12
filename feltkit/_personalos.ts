@@ -8,14 +8,15 @@
  *     records it as `requestedBy` from the verified session), as its principal id here;
  *   - the conversation and the context: messages the requester can read, read by PersonalOS's own
  *     principal under Multiplayer's channel policy, bounded below;
- *   - its own identity to PersonalOS: a bridge session (PERSONALOS_BRIDGE_TOKEN) that holds only
- *     `interactions.receive` there.
+ *   - its own identity to PersonalOS: a bridge session that holds only `interactions.receive` there,
+ *     held as the credential reference of the declared `personalos` integration (feltkit/app.ts).
  * It never resolves who the sender is in PersonalOS (Resolver does, in PersonalOS) and never decides
  * what they may do (AuthBoundry does, in PersonalOS). Display names travel as presentation only.
  */
 import { fail } from "@feltdb/feltkit";
 import { channelMembers, messages, participants } from "./app.js";
 import { PERSONALOS } from "./_ops.js";
+import { selectContext } from "./_context.js";
 
 export const CONTRACT = "personalos.interaction/1";
 /** The adapter id: must equal the bridge session's principal id in PersonalOS. */
@@ -45,42 +46,24 @@ export async function envelope(ctx: Ctx, req: any, channel: any, workspace: { id
   const assistant = (await ctx.db.find(participants, { principalId: PERSONALOS }))[0];
   const directWithAssistant = channel.kind === "dm" && memberIds.size === 2 && memberIds.has(requester.id) && !!assistant && memberIds.has(assistant.id);
 
-  // Bounded context, oldest first, ending at the request: the thread, or the latest top-level messages.
-  let scope: "thread" | "channel" = "channel";
-  let picked: any[];
-  let truncated = false;
-  if (source.rootId) {
-    scope = "thread";
-    const root = await ctx.db.get(messages, source.rootId);
-    const replies = (await ctx.db.find(messages, { rootId: source.rootId })).filter((m: any) => m.seq <= source.seq).sort((a: any, b: any) => a.seq - b.seq);
-    truncated = replies.length + 1 > LIMITS.thread;
-    picked = [root, ...replies.slice(-(LIMITS.thread - 1))].filter(Boolean);
-  } else {
-    const limit = directWithAssistant ? LIMITS.dm : LIMITS.channel;
-    const page = await ctx.db.query(messages, { where: [{ field: "channelId", eq: channel.id }, { field: "topLevel", eq: true }, { field: "seq", lte: source.seq }], orderBy: [{ field: "seq", direction: "desc" }], limit: limit + 1 });
-    truncated = page.records.length > limit;
-    picked = page.records.slice(0, limit).reverse();
-  }
+  // Bounded context, oldest first, ending at the request (feltkit/_context.ts, shared with the room agent).
+  const selected = await selectContext(ctx, source, requester.id, { thread: LIMITS.thread, channel: directWithAssistant ? LIMITS.dm : LIMITS.channel, chars: LIMITS.chars, attachments: LIMITS.attachments, repliesAfterRequest: false });
+  const scope = selected.scope;
+  const truncated = selected.truncated;
+  const context = selected.messages.map((m) => ({
+    id: m.id,
+    ...(m.authorPrincipalId ? { authorSourcePrincipalId: m.authorPrincipalId } : {}),
+    authorName: String(m.authorName).slice(0, 120),
+    authorKind: m.authorKind,
+    isRequester: m.isRequester,
+    text: m.text,
+    at: m.at,
+    ...(m.threadId ? { threadId: m.threadId } : {}),
+    attachments: m.attachments,
+  }));
   const people = new Map<string, any>();
   const who = async (id: string) => { if (!people.has(id)) people.set(id, await ctx.db.get(participants, id)); return people.get(id); };
   const ref = (m: any) => (m.attachments ?? []).slice(0, LIMITS.attachments).map((a: any) => ({ id: a.id, name: String(a.name).slice(0, 300), contentType: a.contentType, size: a.size, messageId: m.id }));
-  const context = [];
-  for (const m of picked.filter((x: any) => !x.deletedAt)) {
-    const a = await who(m.authorId);
-    const text = String(m.text);
-    if (text.length > LIMITS.chars) truncated = true;
-    context.push({
-      id: m.id,
-      ...(a?.principalId && !a.persona ? { authorSourcePrincipalId: a.principalId } : {}),
-      authorName: String(a?.displayName ?? "Former member").slice(0, 120),
-      authorKind: a?.kind === "agent" ? "agent" as const : "human" as const,
-      isRequester: m.authorId === requester.id,
-      text: text.slice(0, LIMITS.chars),
-      at: m.createdAt,
-      ...(m.rootId ? { threadId: m.rootId } : {}),
-      attachments: ref(m),
-    });
-  }
   const handles = [];
   for (const id of source.mentions ?? []) { const p = await who(id); if (p) handles.push(String(p.handle)); }
   // A public channel is readable by the whole workspace, not only by its members.
@@ -108,27 +91,24 @@ export async function envelope(ctx: Ctx, req: any, channel: any, workspace: { id
   };
 }
 
-/** A PersonalOS function over its HTTP API, as the bridge session. Failures keep their code, so the agent retries what can change. */
-export async function call(kind: "query" | "mutation", name: string, args: Record<string, unknown>): Promise<any> {
-  const url = process.env.PERSONALOS_URL;
-  const token = process.env.PERSONALOS_BRIDGE_TOKEN;
-  if (!url || !token) fail("UNAVAILABLE", "PersonalOS is not connected (PERSONALOS_URL, PERSONALOS_BRIDGE_TOKEN).");
-  let response: Response;
+/**
+ * A PersonalOS interaction function, through the declared `personalos` integration (feltkit/app.ts):
+ * FeltKit resolves the bridge session's credential reference for the request and records the call;
+ * this code never holds the token. A refusal by PersonalOS (4xx) keeps a code the agent can act on;
+ * no answer (5xx, timeout) is UNAVAILABLE / OUTCOME_UNKNOWN, which the agent retries, safely, since
+ * PersonalOS executes once per envelope idempotency key.
+ */
+export async function call(ctx: { integrations: { invoke(capability: string, input: Record<string, unknown>): Promise<unknown> } }, op: "receive" | "status" | "cancel", args: Record<string, unknown>): Promise<any> {
+  let out: { ok?: boolean; value?: unknown };
   try {
-    response = await fetch(new URL(`/api/${kind}/${encodeURIComponent(name)}`, url), {
-      method: "POST", signal: AbortSignal.timeout(15_000),
-      headers: { "content-type": "application/json", accept: "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ args }),
-    });
+    out = (await ctx.integrations.invoke(`personalos.${op}`, { args })) as { ok?: boolean; value?: unknown };
   } catch (error) {
-    fail("UNAVAILABLE", `PersonalOS is unreachable: ${(error as Error).message}`);
+    const e = error as { code?: string; message?: string; details?: { status?: number } };
+    if (e.code !== "UPSTREAM_REJECTED") throw error;
+    const status = e.details?.status;
+    const code = status === 401 ? "UNAUTHORIZED" : status === 403 ? "FORBIDDEN" : status === 404 ? "NOT_FOUND" : status === 409 ? "FAILED_PRECONDITION" : "UPSTREAM_REJECTED";
+    throw Object.assign(new Error(String(e.message ?? `PersonalOS refused (${status})`)), { code, remote: true });
   }
-  let payload: any;
-  try { payload = await response.json(); } catch { fail("UNAVAILABLE", `PersonalOS answered ${response.status} without JSON.`); }
-  if (payload?.ok) return payload.value;
-  const e = payload?.error ?? {};
-  const err = new Error(e.message ?? `PersonalOS refused (${response.status})`) as Error & { code: string; remote: true };
-  err.code = e.code ?? "UNAVAILABLE";
-  err.remote = true;
-  throw err;
+  if (!out?.ok) fail("UNAVAILABLE", "PersonalOS answered without a result.");
+  return out.value;
 }

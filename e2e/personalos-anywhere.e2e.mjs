@@ -33,6 +33,17 @@ const MP = `http://localhost:${PORTS.multiplayer}`;
 const POS = `http://localhost:${PORTS.personalos}`;
 const INSTANCE = "multiplayer-e2e";
 const ZONE = "Pacific/Auckland";
+const studioTokens = {};
+const EVENTS_SECRET = `whsec_e2e_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+
+const SECRETS = new Set();
+/** Evidence and logs are committed: every secret this run created is replaced before anything is written. */
+function scrub(text) {
+  let out = String(text);
+  for (const v of [EVENTS_SECRET, ...SECRETS, studioTokens.mp, studioTokens.pos]) if (typeof v === "string" && v.length >= 8) out = out.split(v).join("[secret]");
+  return out;
+}
+const writeEvidence = (evidence, results) => fs.writeFileSync(path.join(SHOTS, "evidence.json"), scrub(JSON.stringify({ ...evidence, results }, null, 2)));
 
 const results = [];
 const check = async (n, name, fn) => {
@@ -77,6 +88,7 @@ async function startResolver() {
   const admin = await ResolverClient.connect({ url: `http://127.0.0.1:${PORTS.resolver}`, apiKey: adminKey, live: false, maxStaleSeconds: 0 });
   const key = await admin.createKey("personalos");
   await admin.grant(key.principal, ["read", "write"], "ref://identity/personalos/*");
+  SECRETS.add(adminKey); SECRETS.add(key.secret);
   return { admin, key: key.secret };
 }
 
@@ -84,7 +96,7 @@ const CAPABILITIES = ["personalos.assistant.converse", "personalos.conversation.
 
 async function startAuthority() {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), "anywhere-authboundry-"));
-  const grants = ["identity.read", "identity.write", "principal.read", "principal.write", "policy.read", "policy.write", "audit.read", "evidence.read", "authorization.read", "authorization.explain", "session.admin"].flatMap((g) => ["--grant", `authority.${g}=role:owner`]);
+  const grants = ["identity.read", "identity.write", "principal.read", "principal.write", "policy.read", "policy.write", "agent.read", "agent.write", "delegation.read", "delegation.create", "delegation.revoke", "audit.read", "evidence.read", "authorization.read", "authorization.explain", "session.admin"].flatMap((g) => ["--grant", `authority.${g}=role:owner`]);
   const env = { AUTHBOUNDRY_PORTAL_ORIGIN: "http://localhost:3001", AUTHBOUNDRY_FELTDB_PATH: data, AUTHBOUNDRY_FELTDB_BRIDGE: path.join(AB_DIR, "bridge", "feltdb-store.cjs"), AUTHBOUNDRY_APPPORT_SERVICES_BRIDGE: path.join(AB_DIR, "bridge", "appport-services.cjs"), FELTDB_URL: "", FELTDB_ENDPOINT: "" };
   await start("authority", path.join(AB_DIR, "target", "release", "authboundry"), ["serve", path.join(AB_DIR, "authboundry.flow"), "--addr", `127.0.0.1:${PORTS.authority}`, "--tenant", "reference", "--account", "owner:local-password:role=owner@reference", ...grants], { cwd: AB_DIR, env, ready: `http://127.0.0.1:${PORTS.authority}/health` });
   const base = `http://127.0.0.1:${PORTS.authority}`;
@@ -103,11 +115,19 @@ async function startAuthority() {
     await req("/_authboundry/control-plane/applications/personalos/principals", { method: "POST", credential, body: { id: `user:${owner}`, kind: "human", claims: { role: "owner" } } }).catch(() => undefined);
     await req("/_authboundry/policies", { method: "POST", credential, body: { application: "personalos", principal_id: `user:${owner}`, capabilities } });
   };
+  // People hold their own capabilities; PersonalOS's executor holds none of its own.
   await policy("ada", CAPABILITIES);
-  // Grace may read and converse, but AuthBoundry has not granted her task creation through surfaces.
-  await policy("grace", CAPABILITIES.filter((c) => c !== "personalos.tasks.create"));
+  await policy("grace", CAPABILITIES);
+  await req("/_authboundry/agents", { method: "POST", credential, body: { id: "agent:personalos", name: "PersonalOS", application: "personalos" } });
+  // What PersonalOS may do for each person is that person's delegation to it (administration here:
+  // AuthBoundry has no federated sign-in for PersonalOS accounts yet, see the M3 register).
+  const delegate = (id, owner, caps) => req("/_authboundry/delegations", { method: "POST", credential, body: { id, delegator: `user:${owner}`, delegate: "agent:personalos", capabilities: caps.join(","), application: "personalos" } });
+  await delegate("ada-personalos", "ada", CAPABILITIES);
+  // Grace delegated reading and conversing, not task creation.
+  await delegate("grace-personalos", "grace", CAPABILITIES.filter((c) => c !== "personalos.tasks.create"));
   const { secret } = await req("/_authboundry/control-plane/applications/personalos/check-credentials", { method: "POST", credential, body: { label: "personalos e2e" } });
-  return { url: base, checkCredential: secret, revoke: (owner) => req(`/_authboundry/control-plane/applications/personalos/policies/${encodeURIComponent(`user:${owner}`)}`, { method: "DELETE", credential }) };
+  SECRETS.add(secret); SECRETS.add(credential);
+  return { url: base, checkCredential: secret, delegate, revokeDelegation: (id) => req(`/_authboundry/delegations/${id}/revoke`, { method: "POST", credential, body: {} }) };
 }
 
 /** A FeltKit client in Node, signed in as a development user (for reading back evidence). */
@@ -130,20 +150,38 @@ const ref = (name) => ({ name, kind: "query" });
     const posState = fs.mkdtempSync(path.join(os.tmpdir(), "anywhere-pos-"));
     await start("personalos", "npx", ["feltkit", "dev", "--port", String(PORTS.personalos)], {
       cwd: POS_DIR,
-      env: { FELTKIT_STATE_DIR: posState, RESOLVER_URL: `http://127.0.0.1:${PORTS.resolver}`, RESOLVER_API_KEY: resolver.key, FELTKIT_AUTHBOUNDRY_URL: authority.url, FELTKIT_AUTHBOUNDRY_APPLICATION: "personalos", FELTKIT_AUTHBOUNDRY_CHECK_CREDENTIAL: authority.checkCredential },
+      // Credentials as custody references (FELTKIT_CREDENTIAL_<ID>): the check credential and the signing
+      // secret of interaction.updated; the app code never reads either.
+      env: { FELTKIT_STATE_DIR: posState, RESOLVER_URL: `http://127.0.0.1:${PORTS.resolver}`, RESOLVER_API_KEY: resolver.key, AUTHBOUNDRY_URL: authority.url, FELTKIT_CREDENTIAL_AUTHBOUNDRY_CHECK: authority.checkCredential, FELTKIT_CREDENTIAL_SURFACE_EVENTS: EVENTS_SECRET },
       ready: `${POS}/api/session`,
     });
     const out = execFileSync("npx", ["feltkit", "session", "create", "--id", "multiplayer", "--role", "bridge", "--type", "service", "--label", "Multiplayer bridge (e2e)"], { cwd: POS_DIR, env: { ...process.env, FELTKIT_STATE_DIR: posState }, encoding: "utf8" });
     bridgeToken = out.split(/\s+/).find((w) => /^fks_/.test(w));
+    SECRETS.add(bridgeToken);
     if (!bridgeToken) throw new Error("feltkit session create printed no token");
     const mpState = fs.mkdtempSync(path.join(os.tmpdir(), "anywhere-mp-"));
     await start("multiplayer", "npx", ["feltkit", "dev", "--port", String(PORTS.multiplayer)], {
-      cwd: ROOT, env: { FELTKIT_STATE_DIR: mpState, PERSONALOS_URL: POS, PERSONALOS_BRIDGE_TOKEN: bridgeToken, MULTIPLAYER_INSTANCE: INSTANCE }, ready: `${MP}/api/session`,
+      cwd: ROOT, env: { FELTKIT_STATE_DIR: mpState, PERSONALOS_URL: POS, FELTKIT_CREDENTIAL_PERSONALOS_BRIDGE: bridgeToken, FELTKIT_CREDENTIAL_PERSONALOS_EVENTS: EVENTS_SECRET, MULTIPLAYER_INSTANCE: INSTANCE }, ready: `${MP}/api/session`,
     });
+    // Events: Multiplayer accepts PersonalOS as an inbound integration; PersonalOS sends interaction.updated
+    // there, signed with the same secret. Both registered by an operator through Studio's admin API.
+    const studio = (log) => /Dashboard\s+(\S+)#token=(fka_[A-Za-z0-9_-]+)/.exec(log)?.[2];
+    const admin = async (base, token, asUser, route, body) => {
+      const r = await fetch(`${base}/_feltkit/api${route}`, { method: "POST", headers: { "content-type": "application/json", "x-feltkit-admin": token, "x-feltkit-as": asUser }, body: JSON.stringify(body) });
+      const v = await r.json().catch(() => ({}));
+      if (r.status >= 400) throw new Error(`${route}: ${r.status} ${JSON.stringify(v)}`);
+      return v.item ?? v;
+    };
+    const mpToken = await until(() => studio(logs.multiplayer), "Multiplayer Studio token");
+    const posToken = await until(() => studio(logs.personalos), "PersonalOS Studio token");
+    studioTokens.mp = mpToken; studioTokens.pos = posToken;
+    const integration = await admin(MP, mpToken, "ada", "/services/webhooks/integrations", { provider: "personalos", signingCredentialRef: "credential-ref:personalos-events" });
+    const endpoint = await admin(POS, posToken, "ada", "/services/manage/_appport/webhooks", { url: `${MP}/webhooks/inbound/${integration.id}`, events: ["interaction.updated"], signingCredentialRef: "credential-ref:surface-events" });
+    evidence.events = { integration: { id: integration.id, principal: integration.principalId }, endpoint: { id: endpoint.id, url: endpoint.url, events: endpoint.events } };
   } catch (e) {
     console.log(`ENVIRONMENT: the stack could not start: ${e.message}`);
     evidence.environment = String(e.message);
-    fs.writeFileSync(path.join(SHOTS, "evidence.json"), JSON.stringify({ ...evidence, results }, null, 2));
+    writeEvidence(evidence, results);
     stopAll();
     process.exit(2);
   }
@@ -155,7 +193,8 @@ const ref = (name) => ({ name, kind: "query" });
     page.on("pageerror", (e) => console.log(`[${who}] pageerror ${e}`));
     return page;
   };
-  const ada = await mk("ada-multiplayer", { timezoneId: ZONE });
+  let ada = await mk("ada-multiplayer", { timezoneId: ZONE });
+  let reopenAda = async () => undefined;
   const grace = await mk("grace-multiplayer");
   const adaPos = await mk("ada-personalos");
   const shot = (page, name) => page.screenshot({ path: path.join(SHOTS, name) });
@@ -261,7 +300,9 @@ const ref = (name) => ({ name, kind: "query" });
     const i = (await posAda.query(ref("interactions:list"), { limit: 10 })).find((x) => x.text.includes(`${stamp}-r1`));
     // Resolver resolved the authenticated sender; AuthBoundry allowed this exact capability, with a decision id.
     if (i.identity.canonical !== "personalos:account:ada" || !i.identity.resolverRef?.startsWith("ref://identity/personalos/multiplayer/")) throw new Error(`identity: ${JSON.stringify(i.identity)}`);
-    if (i.authority?.outcome !== "allow" || i.authority.capability !== "personalos.reminders.create" || i.authority.principal !== "user:ada" || !/decision/.test(i.authority.decisionId ?? "")) throw new Error(`authority: ${JSON.stringify(i.authority)}`);
+    // Requester, executor and delegation are distinct: PersonalOS's agent acted on behalf of Ada, under
+    // Ada's delegation to it, decided by the real AuthBoundry (its own decision id).
+    if (i.authority?.outcome !== "allow" || i.authority.capability !== "personalos.reminders.create" || i.authority.principal !== "agent:personalos" || i.authority.onBehalfOf !== "user:ada" || i.authority.delegationId !== "ada-personalos" || !/decision/.test(i.authority.decisionId ?? "")) throw new Error(`authority: ${JSON.stringify(i.authority)}`);
     const actions = await posAda.query(ref("actions:list"), {});
     const evidenceAction = actions.find((a) => a.kind === "reminder.create" && a.evidence?.id === task.id);
     if (!evidenceAction?.evidence?.verified) throw new Error("no verified execution evidence");
@@ -326,6 +367,54 @@ const ref = (name) => ({ name, kind: "query" });
     return { reply: text };
   });
 
+  await check(3.3, "PHASE 3: approval decided in PersonalOS reaches a CLOSED Multiplayer conversation by a signed event; reopened, the result is there; a replayed delivery changes nothing", async () => {
+    const before = (await tasksOf(posAda)).length;
+    await posAda.mutation({ name: "tasks:create", kind: "mutation" }, { title: `Event check ${stamp}` });
+    await ada.getByRole("button", { name: /^#\s*general/ }).click();
+    await say(ada, `@personalos delete event check ${stamp} (${stamp}-e1)`);
+    await ada.getByText("✦ PersonalOS is waiting for approval in PersonalOS").waitFor({ timeout: 20000 });
+    // Nobody has Multiplayer open from here on.
+    const adaContext = ada.context();
+    await ada.close();
+    reopenAda = async () => { if (ada.isClosed()) { ada = await adaContext.newPage(); await ada.goto(`${MP}/`); await ada.getByRole("button", { name: /^#\s*general/ }).click(); } };
+    await adaPos.goto(`${POS}/#/activity`);
+    await adaPos.getByRole("button", { name: "Approve" }).first().click();
+    // The result is posted in the thread by PersonalOS's event, with no browser on Multiplayer.
+    const mp = await devClient(ROOT, MP, "ada");
+    const ws = (await mp.tenants()).tenants[0];
+    await mp.switchTenant(ws.id);
+    const general = (await mp.query(ref("channels:list"), {})).find((c) => c.name === "general");
+    const request = (await mp.query(ref("messages:list"), { channelId: general.id })).items.find((m) => m.text.includes(`${stamp}-e1`));
+    const replies = async () => (await mp.query(ref("messages:thread"), { rootId: request.id })).replies.map((r) => r.text);
+    await until(async () => (await replies()).includes("Approved in PersonalOS and done."), "result posted while the conversation was closed", 30000);
+    const delivered = await replies();
+    // Reopen: the result is there.
+    ada = await adaContext.newPage();
+    await ada.goto(`${MP}/`);
+    await ada.getByRole("button", { name: /^#\s*general/ }).click();
+    const text = await threadReply(ada, `${stamp}-e1`, /Approved in PersonalOS and done/, 20000, "09-multiplayer-result-after-closed.png");
+    // Replay: the same signed event id is refused; a fresh delivery of the same update posts nothing new.
+    const event = { type: "interaction.updated", data: { adapter: "multiplayer", instance: INSTANCE, key: `${INSTANCE}:${request.id}`, workspaceId: ws.id, seq: 2, state: "completed" } };
+    const send = async (eventId) => {
+      const raw = JSON.stringify(event);
+      const timestamp = new Date().toISOString();
+      const { createHmac } = await import("node:crypto");
+      const signature = createHmac("sha256", EVENTS_SECRET).update(`${timestamp}.${raw}`).digest("hex");
+      return (await fetch(`${MP}/webhooks/inbound/${evidence.events.integration.id}`, { method: "POST", headers: { "content-type": "application/json", "x-appport-event-id": eventId, "x-appport-timestamp": timestamp, "x-appport-signature": signature }, body: raw })).status;
+    };
+    const first = await send(`replay-${stamp}`);
+    const replayed = await send(`replay-${stamp}`);
+    await new Promise((r) => setTimeout(r, 2000));
+    const after = await replies();
+    if (replayed !== 409) throw new Error(`replayed event answered ${replayed}`);
+    if (after.length !== delivered.length) throw new Error(`a replay posted again: ${JSON.stringify(after)}`);
+    const approvals = (await posAda.query(ref("actions:list"), {})).filter((a) => a.kind === "task.delete" && a.status === "succeeded" && a.input.title === `Event check ${stamp}`);
+    if (approvals.length !== 1) throw new Error(`the action ran ${approvals.length} times`);
+    if ((await tasksOf(posAda)).length !== before) throw new Error("task count changed unexpectedly");
+    return { reply: text, firstStatus: first, replayStatus: replayed, threadReplies: after.length };
+  });
+
+  await reopenAda();
   await check(12, "an event replay does not duplicate execution (the bridge re-delivers the reminder's key)", async () => {
     const before = (await tasksOf(posAda)).length;
     const mp = await devClient(ROOT, MP, "ada");
@@ -367,6 +456,17 @@ const ref = (name) => ({ name, kind: "query" });
     return { reply: text };
   });
 
+  await check(4.2, "Ada's delegation revoked in AuthBoundry: the requester, executor and link are unchanged, and her next operation is refused", async () => {
+    await authority.revokeDelegation("ada-personalos");
+    await say(ada, `@personalos add after delegation revoke to my list (${stamp}-dr)`);
+    const text = await threadReply(ada, `${stamp}-dr`, /aren't allowed to do that through Multiplayer/);
+    if ((await tasksOf(posAda)).some((x) => /after delegation revoke/i.test(x.title))) throw new Error("executed after revocation");
+    const i = (await posAda.query(ref("interactions:list"), { limit: 50 })).find((x) => x.text.includes(`${stamp}-dr`));
+    if (i.authority.outcome !== "deny" || i.authority.onBehalfOf !== "user:ada" || i.authority.principal !== "agent:personalos") throw new Error(JSON.stringify(i.authority));
+    await authority.delegate("ada-personalos-2", "ada", CAPABILITIES);
+    return { reply: text, authority: i.authority };
+  });
+
   await check(13.1, "a revoked identity cannot act: Ada disconnects in PersonalOS; the next mention is refused, and Resolver shows the link revoked", async () => {
     await adaPos.goto(`${POS}/#/settings`);
     await adaPos.getByTestId("connected-surfaces").getByRole("button", { name: "Disconnect" }).click();
@@ -378,14 +478,24 @@ const ref = (name) => ({ name, kind: "query" });
     return { resolverStates: states };
   });
 
-  await check(4.1, "AuthBoundry policy revoked for Grace: her next request is refused by the authority", async () => {
-    await authority.revoke("grace");
+  await check(4.1, "Grace's delegation revoked in AuthBoundry: her next request is refused by the authority", async () => {
+    await authority.revokeDelegation("grace-personalos");
     await say(grace, `@personalos what am I forgetting? (${stamp}-g3)`);
     await threadReply(grace, `${stamp}-g3`, /aren't allowed to do that through Multiplayer/);
   });
 
+  for (const [name, text] of Object.entries(logs)) fs.writeFileSync(path.join(SHOTS, `log-${name}.txt`), scrub(text));
+  // Diagnostics: PersonalOS's webhook deliveries and Multiplayer's inbound handling, from the apps themselves.
+  try {
+    const get = async (base, token, route) => (await fetch(`${base}/_feltkit/api${route}`, { headers: { "x-feltkit-admin": token, "x-feltkit-as": "ada" } })).json().catch(() => null);
+    evidence.diagnostics = {
+      personalosDeliveries: await get(POS, studioTokens.pos, "/services/manage/_appport/webhooks/deliveries"),
+      personalosEndpoints: await get(POS, studioTokens.pos, "/services/manage/_appport/webhooks"),
+      multiplayerActivity: ((await get(MP, studioTokens.mp, "/activity?limit=400"))?.entries ?? (await get(MP, studioTokens.mp, "/activity?limit=400")) ?? []),
+    };
+  } catch (e) { evidence.diagnostics = { error: String(e) }; }
   evidence.finished = new Date().toISOString();
-  fs.writeFileSync(path.join(SHOTS, "evidence.json"), JSON.stringify({ ...evidence, results }, null, 2));
+  writeEvidence(evidence, results);
   await browser.close();
   stopAll();
   const failed = results.filter((r) => !r.ok);

@@ -71,13 +71,26 @@ To use it:
    Multiplayer**, then send `link XXXX-XXXX` to PersonalOS in a direct message here.
 3. Mention it, `@PersonalOS remind me to follow up with Sarah tomorrow at 9am`, or DM it. It
    answers in the thread.
-   - Anything that needs approval waits in PersonalOS; the outcome is posted back here.
+   - Anything that needs approval waits in PersonalOS. The outcome is posted back here by a signed
+     event (`POST /webhooks/inbound/<id>`, handled by `personalos:inbound`), whether or not anyone
+     has the conversation open.
    - In shared conversations it never posts your private PersonalOS data.
 
-Configuration: `PERSONALOS_URL`, `PERSONALOS_BRIDGE_TOKEN` (from
-`npx feltkit session create --type service --id multiplayer --role bridge` in PersonalOS), and
-`MULTIPLAYER_INSTANCE`. End to end, with real Resolver and AuthBoundry:
-`node e2e/personalos-anywhere.e2e.mjs`.
+Configuration:
+
+- `PERSONALOS_URL`.
+- The bridge token as a FeltKit credential, `personalos-bridge`. Get the token from
+  `npx feltkit session create --type service --id multiplayer --role bridge` in PersonalOS, then set
+  it with `feltkit credential set personalos-bridge` or `FELTKIT_CREDENTIAL_PERSONALOS_BRIDGE`. The
+  declared `personalos` integration uses it; app code never holds it.
+- The event signing secret, shared with PersonalOS's endpoint, as `personalos-events` (or
+  `FELTKIT_CREDENTIAL_PERSONALOS_EVENTS`).
+- The inbound integration, registered once in Studio: `POST /services/webhooks/integrations`
+  `{ provider: "personalos", signingCredentialRef: "credential-ref:personalos-events" }`.
+- `MULTIPLAYER_INSTANCE`.
+
+End to end, with real Resolver, AuthBoundry and AppPort Services: `node e2e/personalos-anywhere.e2e.mjs`.
+See PersonalOS `docs/ANYWHERE.md`.
 
 ## Your application has two interfaces: Code and Control
 

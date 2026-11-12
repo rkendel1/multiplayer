@@ -1,0 +1,10 @@
+AuthBoundry listening on http://127.0.0.1:4410
+Mode:
+  standalone authority surface
+Application:
+  NOT ATTACHED
+AuthBoundry is serving authentication and authority endpoints only.
+It is NOT currently protecting or proxying an application.
+  sign in    http://127.0.0.1:4410/auth/login
+  session    http://127.0.0.1:4410/auth/session
+  providers  http://127.0.0.1:4410/auth/providers

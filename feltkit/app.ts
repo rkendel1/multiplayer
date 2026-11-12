@@ -57,7 +57,10 @@ export const app = feltkit({
     // own PersonalOS account and posts what PersonalOS answers. It reads only conversations a person
     // brought it into (the same channel policy), and holds no plan or workspace-management rights.
     // "webhooks.emit"/"webhooks.deliver": its replies are messages, announced like any other post.
-    personalos: ["personalos.work", "messages.read", "messages.write", "presence.write", "notifications.send", "webhooks.emit", "webhooks.deliver"],
+    personalos: ["personalos.work", "personalos.call", "messages.read", "messages.write", "presence.write", "notifications.send", "webhooks.emit", "webhooks.deliver"],
+    // PersonalOS's signed events (`interaction.updated`), received as `integration:personalos`: it may
+    // only accept them and ask the PersonalOS agent to fetch the update (feltkit/personalos.ts inbound).
+    "personalos-events": ["webhooks.receive", "personalos.events"],
     // Operating the deployment (Studio, credentials, jobs). Not a workspace role.
     operator: ["intelligence.*", "credential.*", "configuration.*", "apikeys.*", "webhooks.*", "jobs.*", "schedules.*", "feltkit.operations.*"],
   },
@@ -83,7 +86,9 @@ export const app = feltkit({
   services: {
     files: true,
     notifications: { types: ["mention", "agent.replied"] },
-    webhooks: { events: ["message.posted"] },
+    // inbound: PersonalOS's `interaction.updated`, signed with the secret this integration was
+    // registered with (Studio, or webhooks.integrations.register) and verified by AppPort Services.
+    webhooks: { events: ["message.posted"], inbound: { personalos: { handler: "personalos:inbound", roles: ["personalos-events"] } } },
     configuration: true,
     intelligence: true,
   },
@@ -265,3 +270,26 @@ export const activity = app.collection("activity", {
   subjectId: s.optional(s.string()),
   at: s.number(),
 }, { ...WS, indexes: [{ fields: ["workspaceId", "at"] }] });
+
+// ── PersonalOS, the connected assistant (feltkit/personalos.ts) ─────────────
+
+/**
+ * PersonalOS's interaction functions over its HTTP API, as this application's bridge session there.
+ * The session token is a credential reference (`feltkit credential set credential-ref:personalos-bridge`),
+ * resolved only for each call; application code never sees it (FeltKit `ctx.integrations`). Every call
+ * is recorded before and after it is sent. Delivery retries are safe because PersonalOS executes once
+ * per envelope idempotency key; FeltKit's API takes queries as POST too, so `status`, a read, is
+ * declared consequential (never treated as safe to resend after an unknown outcome).
+ */
+const Wrapped = s.record(s.unknown());
+export const personalosApi = app.integration("personalos", {
+  description: "PersonalOS Anywhere: deliver interactions, read their updates, cancel them.",
+  baseUrl: { env: "PERSONALOS_URL" },
+  credential: "credential-ref:personalos-bridge",
+  timeoutMs: 15_000,
+  operations: {
+    receive: { method: "POST", path: "/api/mutation/interactions:receive", input: { args: s.record(s.unknown()) }, output: Wrapped, effect: "consequential", access: "personalos.call", description: "Deliver an interaction (personalos.interaction/1); executed once per idempotency key." },
+    status: { method: "POST", path: "/api/query/interactions:status", input: { args: s.record(s.unknown()) }, output: Wrapped, effect: "consequential", access: "personalos.call", description: "An interaction's state and its updates after a sequence number (a read, POSTed)." },
+    cancel: { method: "POST", path: "/api/mutation/interactions:cancel", input: { args: s.record(s.unknown()) }, output: Wrapped, effect: "consequential", access: "personalos.call", description: "The requester withdraws an interaction." },
+  },
+});

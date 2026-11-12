@@ -23,7 +23,7 @@ import { fail, s } from "@feltdb/feltkit";
 import { activity, agentRequests, app, channelMembers, messages, participants } from "./app.js";
 import { loadChannel, loadWorkspace, me } from "./_authz.js";
 import { ensurePersonalOS, inWorkspace, insertMessage, PERSONALOS } from "./_ops.js";
-import { call, envelope, instance, terminal } from "./_personalos.js";
+import { ADAPTER, call, envelope, instance, terminal } from "./_personalos.js";
 import { record } from "./_util.js";
 
 /** Errors that a later attempt can change (the other side was down, or slow). Everything else is final. */
@@ -37,10 +37,16 @@ export const personalos = app.agent("personalos", {
   roles: ["personalos"],
   access: "personalos.work",
   retry: { maxAttempts: ATTEMPTS, backoffMs: 500 },
-  handler: async (ctx, input: { requestId: string; op?: Op }) => {
+  handler: async (ctx, input: { requestId?: string; interactionKey?: string; op?: Op }) => {
     const op: Op = input.op ?? "deliver";
     const agent = await me(ctx);
-    const req = await ctx.db.get(agentRequests, input.requestId);
+    // A PersonalOS event names the interaction by its key (feltkit/personalos.ts `inbound`); the
+    // request is found in the workspace this run works in, or there is nothing to do here.
+    const req = input.requestId
+      ? await ctx.db.get(agentRequests, input.requestId)
+      : input.interactionKey && op === "sync"
+        ? (await ctx.db.find(agentRequests, { interactionKey: input.interactionKey }))[0] ?? null
+        : null;
     if (!req || req.agentId !== agent.id) return;
     if (op === "deliver" && req.phase !== "received") return; // delivered already (a repeated run)
     if (op !== "deliver" && (!req.interactionKey || terminal(req.phase))) return;
@@ -92,7 +98,7 @@ export const personalos = app.agent("personalos", {
     if (op === "deliver") {
       let outcome: any;
       try {
-        outcome = await call("mutation", "interactions:receive", { envelope: await envelope(ctx, req, channel, { id: ws.workspaceId, name: ws.workspaceName }) });
+        outcome = await call(ctx, "receive", { envelope: await envelope(ctx, req, channel, { id: ws.workspaceId, name: ws.workspaceName }) });
       } catch (error) { return failed(error); }
       const id = await reply(outcome.reply || "Done.");
       await ctx.db.patch(agentRequests, req.id, {
@@ -107,8 +113,8 @@ export const personalos = app.agent("personalos", {
     let st: { state: string; updates: Array<{ seq: number; text: string; state: string }>; revoked: boolean };
     try {
       st = op === "sync"
-        ? await call("query", "interactions:status", { key: req.interactionKey, afterSeq: req.deliveredSeq ?? 0 })
-        : await call("mutation", "interactions:cancel", { key: req.interactionKey, sourcePrincipalId: requester.principalId });
+        ? await call(ctx, "status", { key: req.interactionKey, afterSeq: req.deliveredSeq ?? 0 })
+        : await call(ctx, "cancel", { key: req.interactionKey, sourcePrincipalId: requester.principalId });
     } catch (error) { return failed(error); }
     if (st.revoked) {
       await reply(`PersonalOS is no longer connected for ${requester.displayName}, so I won't post more about this request here.`);
@@ -124,6 +130,32 @@ export const personalos = app.agent("personalos", {
       phase: st.state, deliveredSeq: seq, ...(last ? { replyId: last } : {}),
       ...(terminal(st.state) ? { status: st.state === "completed" ? "done" : "failed", finishedAt: Date.now() } : {}),
     });
+  },
+});
+
+/**
+ * PersonalOS's signed event `interaction.updated` (an approval decided, a cancellation), delivered to
+ * POST /webhooks/inbound/<integrationId> and verified by AppPort Services (signature, timestamp,
+ * replay). This runs as `integration:personalos`, in no workspace, and only asks the PersonalOS
+ * agent to fetch the update for that interaction in the event's workspace: the agent works there
+ * only while it is a member, finds the request by its key or does nothing, and pulls the content
+ * with its own bridge session (interactions:status), which PersonalOS refuses once the person
+ * disconnected. The event carries no content. No browser has to be open.
+ */
+export const inbound = app.mutation({
+  access: "personalos.events",
+  args: { event: s.object({ integrationId: s.string(), provider: s.string(), eventId: s.string(), timestamp: s.string(), payload: s.unknown() }) },
+  returns: s.object({ queued: s.boolean(), reason: s.optional(s.string()) }),
+  handler: async (ctx, { event }) => {
+    const p = (event.payload ?? {}) as { data?: unknown } & Record<string, unknown>;
+    const data = ((p.data ?? p) as Record<string, unknown>) ?? {};
+    // AppPort Services wraps an emitted event ({ type, data, … }); accept the event body either way.
+    const type = typeof p.type === "string" ? p.type : "interaction.updated";
+    if (type !== "interaction.updated") return { queued: false, reason: `ignored ${type}` };
+    if (data.adapter !== ADAPTER || data.instance !== instance()) return { queued: false, reason: "not for this installation" };
+    if (typeof data.key !== "string" || typeof data.workspaceId !== "string" || !data.key.startsWith(`${instance()}:`)) return { queued: false, reason: "malformed" };
+    ctx.afterCommit.agent("personalos", { op: "sync", interactionKey: data.key }, { tenant: data.workspaceId });
+    return { queued: true };
   },
 });
 
