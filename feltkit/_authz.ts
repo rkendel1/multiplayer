@@ -43,11 +43,14 @@ export function atLeast(role: string, min: WorkspaceRole): boolean {
 // ── The policy ──────────────────────────────────────────────────────────────
 
 /** Functions that need no workspace: the caller's own profile and inbox. */
-const UNSCOPED = new Set(["me:get", "me:ensure", "me:updateProfile", "inbox:list", "inbox:markRead"]);
+const UNSCOPED = new Set(["me:get", "me:ensure", "me:updateProfile", "inbox:list", "inbox:markRead",
+  // PersonalOS's verified events arrive as integration:personalos, in no workspace; its role holds only
+  // personalos.events, and the handler only asks the agent (a workspace member) to fetch the update.
+  "personalos:inbound"]);
 /** Mutations on a conversation that a caller who has not joined it may make. */
 const NON_MEMBER_WRITES = new Set(["channels:join", "channels:markRead", "channels:leave", "messages:remove"]);
 /** The room agent's run (app.agent, as the agent's principal): only the agent a request was made to works it. */
-const AGENT_WORK = new Set(["agent/assistant"]);
+const AGENT_WORK = new Set(["agent/assistant", "agent/personalos"]);
 
 const hidden = (): never => fail("NOT_FOUND", "Not found.");
 
@@ -68,6 +71,8 @@ async function target(r: AuthorizeRequest): Promise<Target | null> {
   }
   if (str("attachmentId")) { const a = await db.get(attachments, str("attachmentId")!); return a ? { channelId: a.channelId } : null; }
   if (str("requestId")) { const q = await db.get(agentRequests, str("requestId")!); return q ? { channelId: q.channelId, agentId: q.agentId } : null; }
+  // A PersonalOS event names its request by interaction key (feltkit/personalos.ts inbound → agent run).
+  if (str("interactionKey")) { const [q] = await db.find(agentRequests, { interactionKey: str("interactionKey")! }); return q ? { channelId: q.channelId, agentId: q.agentId } : null; }
   if (r.function === "agents:plan" && str("id")) { const o = await db.get(sharedObjects, str("id")!); return o ? { channelId: o.channelId } : null; }
   return {}; // the workspace itself
 }

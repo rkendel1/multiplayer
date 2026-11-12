@@ -4,6 +4,7 @@ import { me, readableChannels, loadChannel, loadWorkspace } from "./_authz.js";
 import { composeDeterministic, type Composer, type Context } from "./_compose.js";
 import { ensureRoomAgent, insertMessage, ROOM_AGENT } from "./_ops.js";
 import { record } from "./_util.js";
+import { selectContext } from "./_context.js";
 
 /**
  * The room agent, a FeltKit application agent (`app.agent`). A person @mentions it:
@@ -56,19 +57,16 @@ export const assistant = app.agent("assistant", {
   },
 });
 
-/** What the agent reads to answer: the thread the request was made in, or the channel's recent top-level messages, up to the request. */
+/**
+ * What the agent reads to answer: the thread the request was made in (all of it), or the channel's
+ * latest 150 top-level messages up to the request, chosen by the shared selector (feltkit/_context.ts).
+ */
+const ROOM_AGENT_CONTEXT = { thread: Number.MAX_SAFE_INTEGER, channel: 150, chars: Number.MAX_SAFE_INTEGER, attachments: 0, repliesAfterRequest: true };
+
 async function conversation(ctx: any, req: any, channel: any): Promise<Context> {
   const source = (await ctx.db.get(messages, req.messageId))!;
-  const scope = source.rootId
-    ? [(await ctx.db.get(messages, source.rootId))!, ...(await ctx.db.find(messages, { rootId: source.rootId }))]
-    : (await ctx.db.query(messages, { where: [{ field: "channelId", eq: req.channelId }, { field: "topLevel", eq: true }, { field: "seq", lte: source.seq }], orderBy: [{ field: "seq", direction: "desc" }], limit: 150 })).records;
-  const names = new Map<string, any>();
-  const out = [];
-  for (const m of scope.filter((m: any) => !m.deletedAt).sort((a: any, b: any) => a.seq - b.seq)) {
-    if (!names.has(m.authorId)) names.set(m.authorId, await ctx.db.get(participants, m.authorId));
-    const a = names.get(m.authorId);
-    out.push({ id: m.id, author: a?.displayName ?? "Unknown", handle: a?.handle ?? "unknown", authorKind: a?.kind ?? "human", text: m.text, createdAt: m.createdAt });
-  }
+  const selected = await selectContext(ctx, source, req.requestedBy, ROOM_AGENT_CONTEXT);
+  const out = selected.messages.map((m) => ({ id: m.id, author: m.authorName, handle: m.handle, authorKind: m.authorKind, text: m.text, createdAt: m.at }));
   const requester = await ctx.db.get(participants, req.requestedBy);
   return { request: { id: req.id, prompt: req.prompt, requestedBy: requester?.displayName ?? "someone", requestedByHandle: requester?.handle ?? null }, channel: { id: channel.id, name: channel.name, kind: channel.kind, topic: channel.topic ?? null }, messages: out };
 }
@@ -98,7 +96,7 @@ export const requests = app.query({
   args: { channelId: s.string() },
   handler: async (ctx, { channelId }) => {
     await loadChannel(ctx, channelId);
-    return (await ctx.db.find(agentRequests, { channelId })).map((r) => ({ id: r.id, messageId: r.messageId, status: r.status, error: r.error ?? null, replyId: r.replyId ?? null }));
+    return (await ctx.db.find(agentRequests, { channelId })).map((r) => ({ id: r.id, messageId: r.messageId, agentId: r.agentId, requestedBy: r.requestedBy, status: r.status, phase: r.phase ?? null, error: r.error ?? null, replyId: r.replyId ?? null }));
   },
 });
 

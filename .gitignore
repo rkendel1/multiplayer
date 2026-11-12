@@ -13,3 +13,6 @@ dist/
 
 # Browser test screenshots
 e2e/screenshots/
+
+# PersonalOS Anywhere platform install record (scripts/anywhere-platform.mjs in PersonalOS)
+.anywhere/
