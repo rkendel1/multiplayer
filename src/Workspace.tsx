@@ -84,6 +84,7 @@ export function WorkspaceView(props: { workspaceId: string; me: Me; live: boolea
   if (ws.error && ws.error.code !== "NOT_FOUND" && ws.error.code !== "FORBIDDEN") return <div className="center"><div className="card narrow error-text" role="alert">{ws.error.message}</div></div>;
   const isAdmin = ws.data?.myRole === "owner" || ws.data?.myRole === "admin";
   const hasAgent = members.some((m) => m.handle === "assistant");
+  const hasPersonalOS = members.some((m) => m.handle === "personalos");
 
   return (
     <div className={`app pane-${pane} ${panel ? "with-panel" : ""}`}>
@@ -97,6 +98,7 @@ export function WorkspaceView(props: { workspaceId: string; me: Me; live: boolea
         <div className="side-actions">
           {canManage && <button className="side-btn" onClick={() => setModal("invite")}>＋ Invite people</button>}
           {isAdmin && !hasAgent && <AddAgentButton toasts={toasts} />}
+          {isAdmin && !hasPersonalOS && <AddPersonalOSButton toasts={toasts} />}
           <button className="side-btn" onClick={() => { setView("chat"); openPanel({ kind: "members" }); }}>👥 Members · {members.length}</button>
           {ws.data?.myRole !== "guest" && <button className="side-btn" onClick={() => { setView("chat"); openPanel({ kind: "activity" }); }}>🕘 Activity</button>}
           <button className="side-btn" aria-current={view === "settings" ? "page" : undefined} onClick={() => { setView("settings"); setPane("chat"); }}>⚙ Workspace settings</button>
@@ -131,7 +133,7 @@ export function WorkspaceView(props: { workspaceId: string; me: Me; live: boolea
           <div className="settings-view">
             <header className="conv-head"><button className="icon-btn back" onClick={() => setPane("nav")} aria-label="Back to conversations">‹</button><h1>{view === "settings" ? "Workspace settings" : "Your account"}</h1><button className="ghost small" onClick={() => setView("chat")}>Back to conversations</button></header>
             <div className="settings-body">
-              {view === "settings" ? <>{isAdmin && !hasAgent && <section className="fk-section agent-box"><h3>Room agent</h3><p className="muted small">@assistant summarizes conversations and writes project plans. It joins as a member with the agent role and reads only conversations it is brought into.</p><AddAgentButton toasts={toasts} /></section>}<TenantSettings /></> : <AccountSettings />}
+              {view === "settings" ? <>{isAdmin && !hasAgent && <section className="fk-section agent-box"><h3>Room agent</h3><p className="muted small">@assistant summarizes conversations and writes project plans. It joins as a member with the agent role and reads only conversations it is brought into.</p><AddAgentButton toasts={toasts} /></section>}{isAdmin && !hasPersonalOS && <section className="fk-section agent-box"><h3>PersonalOS</h3><p className="muted small">@personalos works for whoever mentions it, in their own PersonalOS account, once they link it there. It reads only conversations it is brought into, and keeps people's private PersonalOS data out of shared conversations.</p><AddPersonalOSButton toasts={toasts} /></section>}<TenantSettings /></> : <AccountSettings />}
             </div>
           </div>
         ) : channelId ? (
@@ -223,6 +225,51 @@ function Empty({ title, body, children }: { title: string; body: string; childre
  * Add the room agent: a FeltKit member with the role "agent" (FeltKit adds agent identities directly;
  * people are invited), then make sure it has a profile so people can mention it.
  */
+/**
+ * Add PersonalOS: an agent identity added the FeltKit way, then its profile so people can mention it.
+ * It acts for whoever mentions it, in that person's own PersonalOS account (after they link it there).
+ */
+function AddPersonalOSButton({ toasts }: { toasts: Toasts }) {
+  const client = useFeltKit();
+  const ensure = useMutation(api.personalos.add);
+  const add = async () => {
+    try {
+      await client.addMember("personalos", "agent").catch((e) => { if (e?.code !== "CONFLICT") throw e; });
+      await ensure({});
+      toasts.info("@personalos joined. Each person links their own PersonalOS account before it acts for them.");
+    } catch (e) { toasts.error(e); }
+  };
+  return <button className="side-btn" onClick={() => void add()}>✦ Add @personalos</button>;
+}
+
+/** What a PersonalOS request is doing, in words (its lifecycle as PersonalOS reports it). */
+const PHASES: Record<string, string> = {
+  received: "received your request, working on it…", understanding: "is understanding your request…", working: "is working on it…",
+  awaiting_approval: "is waiting for approval in PersonalOS", needs_clarification: "needs a detail from you (see its reply)",
+};
+
+/** PersonalOS requests still open in this conversation: their state, cancel (the requester), and fetching news while approval is pending. */
+function PersonalOSRequests({ requests, me, toasts }: { requests: Array<{ id: string; phase: string | null; requestedBy: string }>; me: Me; toasts: Toasts }) {
+  const sync = useMutation(api.personalos.sync);
+  const cancel = useMutation(api.personalos.cancel);
+  const open = requests.filter((r) => r.phase && PHASES[r.phase]);
+  const waiting = open.filter((r) => r.phase === "awaiting_approval").map((r) => r.id).join(",");
+  // An approval is decided in PersonalOS; this surface asks for news while someone is looking.
+  useEffect(() => {
+    if (!waiting) return;
+    const tick = () => { if (document.visibilityState === "visible") for (const id of waiting.split(",")) void sync({ requestId: id }).catch(() => undefined); };
+    const t = setInterval(tick, 5000);
+    return () => clearInterval(t);
+  }, [waiting]);
+  if (!open.length) return null;
+  return <>{open.map((r) => (
+    <span key={r.id} className="agent-working personalos-state" data-phase={r.phase}>
+      ✦ PersonalOS {PHASES[r.phase!]}
+      {r.requestedBy === me.id && r.phase !== "received" && <button className="ghost small" onClick={() => void cancel({ requestId: r.id }).catch(toasts.error)}>Cancel</button>}
+    </span>
+  ))}</>;
+}
+
 function AddAgentButton({ toasts }: { toasts: Toasts }) {
   const client = useFeltKit();
   const list = useMutation(api.agents.add);
@@ -275,7 +322,7 @@ function Conversation(props: { channelId: string; me: Me; members: Member[]; now
   const [tick, setTick] = useState(0);
   useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 1000); return () => clearInterval(t); }, []);
   const typing = useMemo(() => Object.values(typers).filter((x) => x.until > Date.now()).map((x) => ({ displayName: x.name })), [typers, tick]);
-  const working = (requests.data ?? []).filter((r) => r.status === "pending");
+  const working = (requests.data ?? []).filter((r) => r.status === "pending" && !r.phase);
   const title = !c ? "…" : c.kind === "dm" || c.kind === "group" ? c.members.filter((m) => m.participantId !== me.id).map((m) => m.displayName).join(", ") || me.displayName : c.name;
 
   return (
@@ -306,6 +353,7 @@ function Conversation(props: { channelId: string; me: Me; members: Member[]; now
       <div className="conv-foot">
         <div className="typing" aria-live="polite">
           {working.length > 0 && <span className="agent-working">🤖 @assistant is working on {working.length === 1 ? "a request" : `${working.length} requests`}…</span>}
+          <PersonalOSRequests requests={(requests.data ?? []).filter((r) => r.status === "pending")} me={me} toasts={toasts} />
           {typing.length > 0 && <span>{typing.map((t) => t.displayName.split(" ")[0]).join(", ")} {typing.length === 1 ? "is" : "are"} typing<span className="dots">…</span></span>}
         </div>
         {c && !c.isMember ? (

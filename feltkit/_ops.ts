@@ -94,3 +94,15 @@ export async function ensureRoomAgent(ctx: W): Promise<string> {
     title: "Room agent · summaries and project plans", createdAt: Date.now(),
   });
 }
+
+/** PersonalOS's principal here (app.agent "personalos"): one participant, acting for whoever asks it, in their own account. */
+export const PERSONALOS = "personalos";
+
+export async function ensurePersonalOS(ctx: W): Promise<string> {
+  const [existing] = await ctx.db.find(participants, { principalId: PERSONALOS });
+  if (existing) return existing.id;
+  return ctx.db.insert(participants, {
+    principalId: PERSONALOS, kind: "agent", agentType: "personal", handle: PERSONALOS, displayName: "PersonalOS",
+    title: "Your personal assistant · works in your own PersonalOS account", createdAt: Date.now(),
+  });
+}

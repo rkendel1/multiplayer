@@ -47,7 +47,7 @@ const UNSCOPED = new Set(["me:get", "me:ensure", "me:updateProfile", "inbox:list
 /** Mutations on a conversation that a caller who has not joined it may make. */
 const NON_MEMBER_WRITES = new Set(["channels:join", "channels:markRead", "channels:leave", "messages:remove"]);
 /** The room agent's run (app.agent, as the agent's principal): only the agent a request was made to works it. */
-const AGENT_WORK = new Set(["agent/assistant"]);
+const AGENT_WORK = new Set(["agent/assistant", "agent/personalos"]);
 
 const hidden = (): never => fail("NOT_FOUND", "Not found.");
 

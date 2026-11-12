@@ -53,6 +53,11 @@ export const app = feltkit({
     // The room agent (app.agent "assistant", feltkit/agents.ts): it runs with this role and, in a
     // workspace it is a member of, its membership role "agent"; the channel policy applies to it too.
     agent: ["agents.work", "messages.read", "messages.write", "plans.read", "plans.write", "presence.write", "notifications.send"],
+    // PersonalOS (app.agent "personalos", feltkit/personalos.ts): it relays a person's request to their
+    // own PersonalOS account and posts what PersonalOS answers. It reads only conversations a person
+    // brought it into (the same channel policy), and holds no plan or workspace-management rights.
+    // "webhooks.emit"/"webhooks.deliver": its replies are messages, announced like any other post.
+    personalos: ["personalos.work", "messages.read", "messages.write", "presence.write", "notifications.send", "webhooks.emit", "webhooks.deliver"],
     // Operating the deployment (Studio, credentials, jobs). Not a workspace role.
     operator: ["intelligence.*", "credential.*", "configuration.*", "apikeys.*", "webhooks.*", "jobs.*", "schedules.*", "feltkit.operations.*"],
   },
@@ -71,7 +76,8 @@ export const app = feltkit({
   },
   // AppPort Services. Each one is operated in Studio (Services), without code:
   //   webhooks       operators register endpoints for these events; FeltKit signs and retries delivery
-  //                  (people's messages only: FeltKit 0.3.18 could not deliver events an app.agent emits; not yet re-verified on 0.3.25)
+  //                  (people's and agents' messages: on FeltKit 0.3.25 an event an app.agent emits is delivered,
+  //                  signed; tests/personalos.test.ts "webhooks on FeltKit 0.3.25". 0.3.18 could not deliver them)
   //   configuration  variables and credential references per environment (`feltkit config export|import`)
   //   intelligence   the model provider and model an agent may use (`feltkit model set`)
   services: {
@@ -217,6 +223,17 @@ export const agentRequests = app.collection("agentRequests", {
   replyId: s.optional(s.string()),
   sharedObjectId: s.optional(s.string()),
   error: s.optional(s.string({ maxLength: 500 })),
+  /**
+   * PersonalOS requests only (feltkit/personalos.ts). The interaction's lifecycle as PersonalOS reports
+   * it (received → … → completed, awaiting_approval, needs_clarification, failed, cancelled, refused),
+   * its idempotency key there, how many of its updates were posted here, and the requester's time zone
+   * as their client reported it when they posted (FeltKit's X-FeltKit-Time-Zone; a preference, never authority).
+   */
+  phase: s.optional(s.string({ maxLength: 40 })),
+  interactionKey: s.optional(s.string({ maxLength: 300 })),
+  deliveredSeq: s.optional(s.number()),
+  timeZone: s.optional(s.string({ maxLength: 64 })),
+  lastSyncAt: s.optional(s.number()),
 }, { ...WS, indexes: [{ fields: ["agentId", "status"] }] });
 
 const PlanItem = s.object({ title: s.string(), owner: s.optional(s.string()), due: s.optional(s.string()), sourceMessageId: s.optional(s.string()) });

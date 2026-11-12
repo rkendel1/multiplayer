@@ -1,0 +1,283 @@
+{
+  "started": "2026-11-12T01:07:46.803Z",
+  "resolverLink": {
+    "ref": "ref://identity/personalos/multiplayer/fb4d54d76ffa6a7184aea70280fe5d49b17596f72bc47ec6e2e4ecd8fb93332e/fdee430d40bd57deeac186cd9790033d0f06f909a8806e7ce6e717ab7c7d5029/mwcumhay08b52ffcb608",
+    "value": {
+      "canonical": "personalos:account:ada",
+      "external": {
+        "adapter": "multiplayer",
+        "instance": "multiplayer-e2e",
+        "principalId": "ada"
+      },
+      "verification": {
+        "method": "personalos.link-code/dm",
+        "challengeId": "mwcumhay08b52ffcb608",
+        "verifiedAt": "2026-11-12T01:07:56.653Z"
+      },
+      "linkedAt": "2026-11-12T01:07:56.653Z"
+    },
+    "history": {
+      "entries": [
+        {
+          "revision": 1,
+          "action": "create",
+          "strategy": "single",
+          "targets": [
+            {
+              "value": {
+                "canonical": "personalos:account:ada",
+                "external": {
+                  "adapter": "multiplayer",
+                  "instance": "multiplayer-e2e",
+                  "principalId": "ada"
+                },
+                "verification": {
+                  "method": "personalos.link-code/dm",
+                  "challengeId": "mwcumhay08b52ffcb608",
+                  "verifiedAt": "2026-11-12T01:07:56.653Z"
+                },
+                "linkedAt": "2026-11-12T01:07:56.653Z"
+              }
+            }
+          ],
+          "actor": "api_key:1258cacc-d112-47af-8744-b7110de01a24",
+          "reason": "linked by personalos:account:ada (challenge mwcumhay08b52ffcb608)",
+          "at": "2026-11-12T01:07:56.761Z"
+        }
+      ]
+    }
+  },
+  "reminder": {
+    "reply": "Set. I'll remind you to follow up with Sarah (mwcumdw7-r1) tomorrow at 9am.",
+    "task": {
+      "id": "mwcumi3d9a4bbeaee6da",
+      "title": "Follow up with Sarah (mwcumdw7-r1)",
+      "due": "2026-11-13",
+      "remindAt": 1794513600000,
+      "localInZone": "2026-11-13, 09:00"
+    },
+    "action": {
+      "owner": "ada",
+      "seq": 1,
+      "kind": "reminder.create",
+      "summary": "Reminder created: Follow up with Sarah (mwcumdw7-r1)",
+      "status": "succeeded",
+      "approval": "none",
+      "input": {
+        "title": "Follow up with Sarah (mwcumdw7-r1)",
+        "priority": "normal",
+        "reminder": true,
+        "tzOffset": -780,
+        "due": "2026-11-13",
+        "time": "09:00"
+      },
+      "evidence": {
+        "collection": "tasks",
+        "id": "mwcumi3d9a4bbeaee6da",
+        "version": 0,
+        "verified": true
+      },
+      "via": "chat",
+      "conversationId": "mwcumi374ac2d2591bfe",
+      "messageId": "mwcumi3b7a559ae8d8fa",
+      "createdAt": 1794445677337,
+      "decidedAt": 1794445677337,
+      "id": "mwcumi3da3e772746d04",
+      "__version": 1
+    },
+    "interaction": {
+      "id": "mwcumi3e08e0fe95402f",
+      "adapter": "multiplayer",
+      "surface": "Multiplayer",
+      "state": "completed",
+      "intent": "task.create",
+      "audience": "shared",
+      "where": "Multiplayer · #general",
+      "workspace": "Northwind Labs",
+      "from": "Ada Lovelace",
+      "text": "@PersonalOS remind me to follow up with Sarah tomorrow at 9am (mwcumdw7-r1)",
+      "conversationId": "mwcumi374ac2d2591bfe",
+      "actionIds": [
+        "mwcumi3da3e772746d04"
+      ],
+      "provenance": {
+        "messageIds": [
+          "mwcumi0o88cc12232f51"
+        ],
+        "attachmentIds": [],
+        "privateDataUsed": false
+      },
+      "context": {
+        "scope": "channel",
+        "messages": 4,
+        "truncated": false
+      },
+      "identity": {
+        "source": "ada",
+        "canonical": "personalos:account:ada",
+        "resolverRef": "ref://identity/personalos/multiplayer/fb4d54d76ffa6a7184aea70280fe5d49b17596f72bc47ec6e2e4ecd8fb93332e/fdee430d40bd57deeac186cd9790033d0f06f909a8806e7ce6e717ab7c7d5029/mwcumhay08b52ffcb608",
+        "resolverRevision": 1
+      },
+      "authority": {
+        "capability": "personalos.reminders.create",
+        "outcome": "allow",
+        "decisionId": "personalos-decision-1794445677-272cecce00e59746",
+        "principal": "user:ada"
+      },
+      "updates": [
+        {
+          "seq": 1,
+          "state": "completed",
+          "text": "Set. I'll remind you to **follow up with Sarah (mwcumdw7-r1)** tomorrow at 9am.",
+          "at": 1794445677251
+        }
+      ],
+      "createdAt": 1794445677251
+    }
+  },
+  "finished": "2026-11-12T01:08:23.748Z",
+  "results": [
+    {
+      "n": 0,
+      "name": "setup: Ada opens a workspace in Multiplayer and adds @personalos; Grace joins it",
+      "ok": true,
+      "ms": 2631
+    },
+    {
+      "n": 13,
+      "name": "an unknown (unlinked) identity cannot act: Grace's mention is refused with how to connect",
+      "ok": true,
+      "ms": 967,
+      "detail": {
+        "reply": "I don't know which PersonalOS account is yours yet, so I can't act for you. To connect: in PersonalOS open Settings → Co"
+      }
+    },
+    {
+      "n": 3,
+      "name": "linking (proof of both identities): a code issued in PersonalOS, sent by Ada in a DM in Multiplayer; Resolver records it",
+      "ok": true,
+      "ms": 1657,
+      "detail": {
+        "ref": "ref://identity/personalos/multiplayer/fb4d54d76ffa6a7184aea70280fe5d49b17596f72bc47ec6e2e4ecd8fb93332e/fdee430d40bd57deeac186cd9790033d0f06f909a8806e7ce6e717ab7c7d5029/mwcumhay08b52ffcb608"
+      }
+    },
+    {
+      "n": 1,
+      "name": "1-2, 4-8, 17: Ada mentions @PersonalOS in #general: verified, resolved, authorized; a real reminder at Ada's local 9:00 tomorrow; the result in the thread",
+      "ok": true,
+      "ms": 1584,
+      "detail": {
+        "local": "2026-11-13, 09:00",
+        "zone": "Pacific/Auckland"
+      }
+    },
+    {
+      "n": 5,
+      "name": "PersonalOS received bounded, provenance-carrying context and the decision evidence (interaction record)",
+      "ok": true,
+      "ms": 9,
+      "detail": {
+        "context": {
+          "scope": "channel",
+          "messages": 4,
+          "truncated": false
+        },
+        "provenance": {
+          "messageIds": [
+            "mwcumi0o88cc12232f51"
+          ],
+          "attachmentIds": [],
+          "privateDataUsed": false
+        }
+      }
+    },
+    {
+      "n": 8,
+      "name": "the same interaction is visible in PersonalOS: the conversation, the task, the action log",
+      "ok": true,
+      "ms": 221
+    },
+    {
+      "n": 9,
+      "name": "an ambiguous request triggers clarification in the thread",
+      "ok": true,
+      "ms": 1924,
+      "detail": {
+        "reply": "When should I remind you to email Omar (mwcumdw7-c1)?"
+      }
+    },
+    {
+      "n": 10,
+      "name": "approval required: the request waits for Ada's approval in PersonalOS; approved there, the result is posted back in the thread",
+      "ok": true,
+      "ms": 7009,
+      "detail": {
+        "reply": "Approved in PersonalOS and done."
+      }
+    },
+    {
+      "n": 11,
+      "name": "a denied action does not execute, and the denial is reflected in the thread",
+      "ok": true,
+      "ms": 6769,
+      "detail": {
+        "reply": "Declined in PersonalOS. Nothing was changed."
+      }
+    },
+    {
+      "n": 16,
+      "name": "cancellation by the requester is reflected accurately (and the proposal is declined in PersonalOS)",
+      "ok": true,
+      "ms": 2132,
+      "detail": {
+        "reply": "Cancelled. Nothing was changed."
+      }
+    },
+    {
+      "n": 12,
+      "name": "an event replay does not duplicate execution (the bridge re-delivers the reminder's key)",
+      "ok": true,
+      "ms": 43,
+      "detail": {
+        "interactionId": "mwcumi3e08e0fe95402f"
+      }
+    },
+    {
+      "n": 14,
+      "name": "another user's mention cannot reach Ada's private memory; AuthBoundry decides Grace's own capabilities",
+      "ok": true,
+      "ms": 3935,
+      "detail": {
+        "graceReply": "That's about your private PersonalOS data, so I answered in PersonalOS instead of here. Ask me in a direct message to see it in Multiplayer.",
+        "denied": "You aren't allowed to do that through Multiplayer (personalos.tasks.create: capability_missing). Nothing was done."
+      }
+    },
+    {
+      "n": 15,
+      "name": "a group conversation cannot expose Ada's private account data (her own mention in #general)",
+      "ok": true,
+      "ms": 565,
+      "detail": {
+        "reply": "That's about your private PersonalOS data, so I answered in PersonalOS instead of here. Ask me in a direct message to see it in Multiplayer."
+      }
+    },
+    {
+      "n": 13.1,
+      "name": "a revoked identity cannot act: Ada disconnects in PersonalOS; the next mention is refused, and Resolver shows the link revoked",
+      "ok": true,
+      "ms": 464,
+      "detail": {
+        "resolverStates": [
+          "active",
+          "revoked"
+        ]
+      }
+    },
+    {
+      "n": 4.1,
+      "name": "AuthBoundry policy revoked for Grace: her next request is refused by the authority",
+      "ok": true,
+      "ms": 1938
+    }
+  ]
+}

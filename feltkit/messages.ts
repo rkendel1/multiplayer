@@ -1,7 +1,7 @@
 import { fail, s } from "@feltdb/feltkit";
-import { agentRequests, app, attachments, messages, participants, reactions, sharedObjects } from "./app.js";
+import { agentRequests, app, attachments, channelMembers, messages, participants, reactions, sharedObjects } from "./app.js";
 import { readableChannels, loadChannel, loadWorkspace } from "./_authz.js";
-import { insertMessage, inWorkspace, joinChannel, ROOM_AGENT } from "./_ops.js";
+import { insertMessage, inWorkspace, joinChannel, PERSONALOS, ROOM_AGENT } from "./_ops.js";
 import { mentionedHandles, record } from "./_util.js";
 
 const PAGE = 60;
@@ -117,17 +117,30 @@ export const send = app.mutation({
       ...(root ? { threadId: root.id } : {}), ...(channel.kind === "public" ? { text: body } : {}), at: now,
     });
 
-    for (const p of mentioned) {
+    // A direct message to PersonalOS is a request to it, mention or not.
+    const asked = [...mentioned];
+    if (channel.kind === "dm" && participant.kind === "human" && !asked.some((p) => p.principalId === PERSONALOS)) {
+      for (const m of await ctx.db.find(channelMembers, { channelId })) {
+        const other = m.participantId !== participant.id ? await ctx.db.get(participants, m.participantId) : null;
+        if (other?.principalId === PERSONALOS && (await inWorkspace(ctx, other))) asked.push(other);
+      }
+    }
+    for (const p of asked) {
       if (p.id === participant.id) continue;
       if (p.kind === "agent") {
         // A person asking an agent: the agent must be in the conversation to read it. The person,
         // who can see the conversation, brings it in; the agent then works under its own identity.
-        // Only the application's own agent (app.agent "assistant") acts on mentions.
-        if (participant.kind === "agent" || p.principalId !== ROOM_AGENT) continue; // agents do not trigger agents (no loops)
+        // Only the application's own agents (app.agent "assistant", "personalos") act on mentions.
+        const agentName = p.principalId === ROOM_AGENT ? "assistant" : p.principalId === PERSONALOS ? "personalos" : null;
+        if (participant.kind === "agent" || !agentName) continue; // agents do not trigger agents (no loops)
         await joinChannel(ctx, channel.workspaceId, channelId, p.id);
-        const requestId = await ctx.db.insert(agentRequests, { workspaceId: channel.workspaceId, channelId, messageId: id, agentId: p.id, requestedBy: participant.id, prompt: body, status: "pending", createdAt: now });
-        // Recorded with this transaction, run by FeltKit after the commit as the agent (feltkit/agents.ts).
-        ctx.afterCommit.agent("assistant", { requestId });
+        const requestId = await ctx.db.insert(agentRequests, {
+          workspaceId: channel.workspaceId, channelId, messageId: id, agentId: p.id, requestedBy: participant.id, prompt: body, status: "pending", createdAt: now,
+          // PersonalOS: the lifecycle starts here, and the requester's time zone as their client reported it (FeltKit's caller context).
+          ...(agentName === "personalos" ? { phase: "received", ...(ctx.auth.context.timeZone ? { timeZone: ctx.auth.context.timeZone } : {}) } : {}),
+        });
+        // Recorded with this transaction, run by FeltKit after the commit as the agent (feltkit/agents.ts, personalos.ts).
+        ctx.afterCommit.agent(agentName, { requestId });
         await record(ctx, channel.workspaceId, participant.id, "agent.requested", `${participant.displayName} asked @${p.handle}: ${body.slice(0, 120)}`, id);
       } else if (!p.persona) {
         ctx.afterCommit.notifications.send({

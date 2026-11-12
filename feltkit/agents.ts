@@ -98,7 +98,7 @@ export const requests = app.query({
   args: { channelId: s.string() },
   handler: async (ctx, { channelId }) => {
     await loadChannel(ctx, channelId);
-    return (await ctx.db.find(agentRequests, { channelId })).map((r) => ({ id: r.id, messageId: r.messageId, status: r.status, error: r.error ?? null, replyId: r.replyId ?? null }));
+    return (await ctx.db.find(agentRequests, { channelId })).map((r) => ({ id: r.id, messageId: r.messageId, agentId: r.agentId, requestedBy: r.requestedBy, status: r.status, phase: r.phase ?? null, error: r.error ?? null, replyId: r.replyId ?? null }));
   },
 });
 

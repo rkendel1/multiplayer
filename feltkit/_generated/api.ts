@@ -10,8 +10,9 @@ import type * as demo_module from "../demo.js";
 import type * as inbox_module from "../inbox.js";
 import type * as me_module from "../me.js";
 import type * as messages_module from "../messages.js";
+import type * as personalos_module from "../personalos.js";
 import type * as presence_module from "../presence.js";
 import type * as workspaces_module from "../workspaces.js";
 
 /** Typed references to every query and mutation. Type-only imports: no backend code reaches the browser. */
-export const api = createApi<{ "activity": typeof activity_module; "agents": typeof agents_module; "app": typeof app_module; "attachments": typeof attachments_module; "channels": typeof channels_module; "demo": typeof demo_module; "inbox": typeof inbox_module; "me": typeof me_module; "messages": typeof messages_module; "presence": typeof presence_module; "workspaces": typeof workspaces_module }>();
+export const api = createApi<{ "activity": typeof activity_module; "agents": typeof agents_module; "app": typeof app_module; "attachments": typeof attachments_module; "channels": typeof channels_module; "demo": typeof demo_module; "inbox": typeof inbox_module; "me": typeof me_module; "messages": typeof messages_module; "personalos": typeof personalos_module; "presence": typeof presence_module; "workspaces": typeof workspaces_module }>();
