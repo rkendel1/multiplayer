@@ -289,7 +289,7 @@ export const personalosApi = app.integration("personalos", {
   timeoutMs: 15_000,
   operations: {
     receive: { method: "POST", path: "/api/mutation/interactions:receive", input: { args: s.record(s.unknown()) }, output: Wrapped, effect: "consequential", access: "personalos.call", description: "Deliver an interaction (personalos.interaction/1); executed once per idempotency key." },
-    status: { method: "POST", path: "/api/query/interactions:status", input: { args: s.record(s.unknown()) }, output: Wrapped, effect: "consequential", access: "personalos.call", description: "An interaction's state and its updates after a sequence number (a read, POSTed)." },
+    status: { method: "POST", path: "/api/mutation/interactions:status", input: { args: s.record(s.unknown()) }, output: Wrapped, effect: "consequential", access: "personalos.call", description: "An interaction's state and its updates after a sequence number (a read, POSTed)." },
     cancel: { method: "POST", path: "/api/mutation/interactions:cancel", input: { args: s.record(s.unknown()) }, output: Wrapped, effect: "consequential", access: "personalos.call", description: "The requester withdraws an interaction." },
   },
 });
