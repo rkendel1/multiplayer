@@ -68,3 +68,24 @@ export async function freeHandle(ctx: { db: { find(c: any, f: any): Promise<any[
   }
   return `${base.slice(0, 20)}-${Date.now() % 100000}`;
 }
+
+/**
+ * Delegation: what the caller lets Multiplayer's agents do on their behalf, kept by AuthBoundry (the
+ * owner of delegated authority). Each person grants and revokes only their own. Revoking takes effect
+ * on the agent's next call (policy channels.manage.delegated, feltkit/policies.ts).
+ */
+const DELEGABLE = ["channels.manage"] as const;
+export const delegations = app.action({
+  access: "authenticated",
+  handler: async (ctx) => ctx.authority.grants.list(),
+});
+export const delegate = app.action({
+  access: "authenticated",
+  args: { capabilities: s.array(s.enum([...DELEGABLE]), { minItems: 1 }) },
+  handler: async (ctx, { capabilities }) => ctx.authority.grants.grant({ capabilities: [...capabilities] }),
+});
+export const revokeDelegation = app.action({
+  access: "authenticated",
+  args: { id: s.string() },
+  handler: async (ctx, { id }) => ctx.authority.grants.revoke(id),
+});

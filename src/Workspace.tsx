@@ -621,7 +621,7 @@ function Details(props: { channelId: string; me: Me; members: Member[]; online: 
       {c.kind !== "dm" && (
         <section>
           <h3>Topic</h3>
-          {topic === null ? <p>{c.topic ?? <span className="muted">No topic</span>} {c.isMember && <button className="link small" onClick={() => setTopicText(c.topic ?? "")}>Edit</button>}</p> : (
+          {topic === null ? <p>{c.topic ?? <span className="muted">No topic</span>} {c.canManage && <button className="link small" onClick={() => setTopicText(c.topic ?? "")}>Edit</button>}</p> : (
             <form className="row" onSubmit={(e) => { e.preventDefault(); void setTopic({ channelId: c.id, topic }).then(() => setTopicText(null), props.toasts.error); }}>
               <input value={topic} onChange={(e) => setTopicText(e.target.value)} aria-label="Topic" maxLength={250} /><button className="small" type="submit">Save</button>
             </form>
