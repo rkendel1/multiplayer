@@ -7,7 +7,9 @@
  * call on every interface:
  *   1. Roles (below) grant AppPort permissions. A workspace role (owner, admin, member, guest, agent)
  *      is held only in a session working in that workspace; an account alone holds "person" (nothing).
- *   2. `authorize` (feltkit/_authz.ts) keeps the application's own conversation policy: private
+ *   2. Declarative policies (feltkit/policies.ts): who manages a conversation and whose messages a
+ *      caller may change, including an agent acting within a person's AuthBoundry delegation.
+ *   3. `authorize` (feltkit/_authz.ts) keeps the application's own conversation policy: private
  *      channels, direct messages, the agent's queue. Workspace data collections are tenant-scoped, so
  *      another workspace's records do not exist for a call.
  *
@@ -52,7 +54,8 @@ export const app = feltkit({
     guest: GUEST,
     // The room agent (app.agent "assistant", feltkit/agents.ts): it runs with this role and, in a
     // workspace it is a member of, its membership role "agent"; the channel policy applies to it too.
-    agent: ["agents.work", "messages.read", "messages.write", "plans.read", "plans.write", "presence.write", "notifications.send"],
+    // channels.manage: only within a person's AuthBoundry delegation (policy channels.manage.delegated).
+    agent: ["agents.work", "messages.read", "messages.write", "plans.read", "plans.write", "presence.write", "notifications.send", "channels.manage"],
     // PersonalOS (app.agent "personalos", feltkit/personalos.ts): it relays a person's request to their
     // own PersonalOS account and posts what PersonalOS answers. It reads only conversations a person
     // brought it into (the same channel policy), and holds no plan or workspace-management rights.
@@ -70,6 +73,17 @@ export const app = feltkit({
   },
   // Conversation policy: one function for every call (feltkit/_authz.ts).
   authorize,
+  // Delegated authority (an agent acting for a person) is AuthBoundry's: hosted when AUTHBOUNDRY_URL is
+  // set, else a private one FeltKit runs (@authboundry/local). If neither is available, delegated
+  // conditions do not hold and agents are refused (fail closed).
+  authority: {
+    local: true,
+    url: { env: "AUTHBOUNDRY_URL" },
+    application: "multiplayer",
+    checkCredential: "credential-ref:authboundry-check",
+    executor: { principal: "agent:multiplayer" },
+    capabilities: ["channels.manage"],
+  },
   dev: {
     users: [
       { id: "ada", name: "Ada Lovelace", roles: ["person", "operator"] },

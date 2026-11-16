@@ -80,13 +80,17 @@ export const create = app.mutation({
   },
 });
 
+/** Who may: policies channels.manage.* (feltkit/policies.ts): an admin or owner, the creator, or an agent within the creator's delegation. */
 export const setTopic = app.mutation({
   access: "channels.manage",
   args: { channelId: s.string(), topic: s.string({ maxLength: 250 }) },
+  returns: s.boolean(),
+  capability: { name: "channels.settopic", description: "Set a conversation's topic (its admins and creator, or an agent within the creator's delegation)." },
   handler: async (ctx, { channelId, topic }) => {
     const { channel } = await loadChannel(ctx, channelId);
     if (channel.kind === "dm") fail("FAILED_PRECONDITION", "Direct messages have no topic.");
     await ctx.db.patch(channels, channelId, { topic: topic.trim() || undefined });
+    return true;
   },
 });
 
@@ -114,7 +118,7 @@ export const leave = app.mutation({
   },
 });
 
-/** Add workspace members to a channel the caller is in (private channels and groups included). */
+/** Add workspace members to a channel (private channels and groups included). Who may: policies channels.manage.* (feltkit/policies.ts). */
 export const addMembers = app.mutation({
   access: "channels.manage",
   args: { channelId: s.string(), participantIds: s.array(s.string(), { minItems: 1, maxItems: 50 }) },

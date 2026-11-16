@@ -44,6 +44,8 @@ export function atLeast(role: string, min: WorkspaceRole): boolean {
 
 /** Functions that need no workspace: the caller's own profile and inbox. */
 const UNSCOPED = new Set(["me:get", "me:ensure", "me:updateProfile", "inbox:list", "inbox:markRead",
+  // A person's own AuthBoundry delegation (each person manages only their own; FeltKit enforces it).
+  "me:delegations", "me:delegate", "me:revokeDelegation",
   // PersonalOS's verified events arrive as integration:personalos, in no workspace; its role holds only
   // personalos.events, and the handler only asks the agent (a workspace member) to fetch the update.
   "personalos:inbound"]);

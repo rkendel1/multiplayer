@@ -159,8 +159,8 @@ export const edit = app.mutation({
   handler: async (ctx, { messageId, text }) => {
     const m = await ctx.db.get(messages, messageId);
     if (!m) fail("NOT_FOUND", "Message not found.");
-    const { participant } = await loadChannel(ctx, m.channelId);
-    if (m.authorId !== participant.id) fail("FORBIDDEN", "You can only edit your own messages.");
+    await loadChannel(ctx, m.channelId);
+    // Only the author: policy messages.edit.author (feltkit/policies.ts).
     if (m.deletedAt) fail("FAILED_PRECONDITION", "That message was deleted.");
     await ctx.db.patch(messages, messageId, { text: text.trim(), editedAt: Date.now() });
   },
@@ -173,9 +173,8 @@ export const remove = app.mutation({
   handler: async (ctx, { messageId }) => {
     const m = await ctx.db.get(messages, messageId);
     if (!m) fail("NOT_FOUND", "Message not found.");
-    const { participant, role } = await loadChannel(ctx, m.channelId);
-    const moderator = role === "owner" || role === "admin";
-    if (m.authorId !== participant.id && !moderator) fail("FORBIDDEN", "You can only delete your own messages.");
+    // The author, or a workspace admin or owner: policy messages.remove.author-or-moderator (feltkit/policies.ts).
+    const { participant } = await loadChannel(ctx, m.channelId);
     await ctx.db.patch(messages, messageId, { deletedAt: Date.now() });
     if (m.authorId !== participant.id) await record(ctx, m.workspaceId, participant.id, "message.moderated", `${participant.displayName} deleted a message`, messageId);
   },
