@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@authboundry/local": "0.1.0",
-    "@feltdb/feltkit": "0.3.30",
+    "@feltdb/feltkit": "0.3.33",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },
