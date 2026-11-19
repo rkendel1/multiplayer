@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Public demo deployment: `npm run build && npm run start:demo`.
+ * Public demo deployment. Locally: `npm run build && npm run start:demo`. On Fly.io: `npm run deploy:demo`, then
+ * `npx feltkit fly deploy` (scripts/demo-artifact.mjs makes the container start with this file).
  *
  * Runs the built application in FeltKit's development environment, so its declared dev users are
  * offered and the app signs a visitor straight in (no login page), then loads the demo data once

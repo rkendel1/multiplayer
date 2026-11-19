@@ -305,27 +305,110 @@ Questions and contributions are welcome at [github.com/rkendel1/multiplayer](htt
 
 ## Public demo deployment
 
-Every FeltKit starter deploys as a public demo the same way:
+This starter deploys as a public demo: visitors skip sign-in and land in the app, with demo data loaded. Every
+FeltKit starter does it the same way, with FeltKit's own Fly.io deployment.
+
+### Deploy the demo to Fly.io
 
 ```bash
-npm ci
-npm run build
-npm run start:demo
+npm run deploy:demo
 ```
 
-`start:demo` (`scripts/demo-server.mjs`) runs the built app in FeltKit's **development** environment, so the
-app's declared dev users are on offer and a visitor is signed in as one automatically: no login page, straight to
-the app. Once the server is up it loads the demo data through the app's own functions (`scripts/demo-seed.ts`: the *Northwind Labs* sample workspace). Re-running is a no-op.
+```bash
+npx feltkit fly deploy
+```
+
+`deploy:demo` builds and verifies FeltKit's normal Fly.io artifact (`npx feltkit deploy --target fly`, in
+`.feltkit/deploy`), then `scripts/demo-artifact.mjs` changes only how the container starts. `npx feltkit fly deploy`
+deploys it exactly as it would a production build: it creates the Fly app and its volume the first time.
+
+- The demo is its own Fly app, **`multiplayer-demo`** (https://multiplayer-demo.fly.dev), never the production app `multiplayer`. To
+  name it differently, set `"feltkitDemo": { "flyApp": "<name>" }` in `package.json` (or `DEMO_FLY_APP`).
+- The container runs `scripts/demo-server.mjs`: the app in FeltKit's **development** environment, so its dev users
+  are offered and the app signs each visitor in as the first one. Once the server is up it loads the demo data
+  through the app's own functions (`scripts/demo-seed.ts`: the *Northwind Labs* sample workspace). Data and FeltKit's development files are on the Fly volume, so a redeploy
+  keeps them and loads nothing twice.
+- To publish a change, run both commands again.
+
+Try the same thing locally:
+
+```bash
+npm run build
+```
+
+```bash
+npm run start:demo
+```
 
 | Variable | Effect |
 |---|---|
 | `PORT` / `HOST` | where it listens (default: FeltKit's port from 3000, `0.0.0.0`) |
-| `FELTKIT_STATE_DIR` | where the demo data lives; point it at a volume to keep it across restarts |
+| `FELTKIT_STATE_DIR` | where the demo data lives (the Fly image sets `/data/state`) |
 | `DEMO_SEED=0` | serve without loading demo data |
 
 **Demo only.** Every visitor acts as a dev user, with that user's roles (including admin and operator roles), on
 one shared copy of the data, and development mode relaxes production safeguards. Never give a demo deployment real
-provider keys, credentials or customer data, and use `npm start` (production) for anything real.
+provider keys, credentials or customer data. For production, use `npx feltkit deploy --target fly` without
+`scripts/demo-artifact.mjs`.
+
+### Make your own FeltKit app a demo
+
+The same four pieces work in any FeltKit app:
+
+1. **Dev users** are who visitors become. Declare them in `feltkit/app.ts`; the first is the default, so give it
+   the roles a visitor should have. FeltKit offers them only in development, never in production.
+
+   ```ts
+   dev: { users: [{ id: "ada", name: "Ada Lovelace", roles: ["admin"] }, { id: "grace", name: "Grace Hopper", roles: ["member"] }] },
+   ```
+
+2. **Sign visitors in.** Before the app shows its sign-in screen, sign in as the first dev user when the server
+   offers dev users. In production the list is empty, so this does nothing there.
+
+   ```tsx
+   import { useEffect, useRef } from "react";
+   import { useSession } from "@feltdb/feltkit/react";
+
+   export function useDevSignIn() {
+     const { session, signInAsDevUser } = useSession();
+     const tried = useRef(false);
+     useEffect(() => {
+       if (session && !session.principal && session.devUsers.length && !tried.current) {
+         tried.current = true;
+         void signInAsDevUser(session.devUsers[0]!.id);
+       }
+     }, [session, signInAsDevUser]);
+   }
+   ```
+
+   Multiplayer does this in `src/App.tsx`, after its `?as=<dev user>` switch.
+
+3. **Demo data** in `scripts/demo-seed.ts`: sign in as a dev user and call your app's own functions over HTTP, the
+   way a person would. Make each step safe to repeat; it runs on every start. In a multi-tenant app, create the
+   tenant for the dev user visitors become (`scripts/demo-seed.ts` here does what the app's *Open sample workspace* button does, for Ada).
+
+   ```ts
+   import { createClient } from "@feltdb/feltkit/client";
+   import { api } from "../feltkit/_generated/api.js";
+
+   let token: string | null = null;
+   const ada = createClient({ url: process.argv[2], session: "bearer", tokens: { get: () => token, set: (t) => void (token = t) }, context: false });
+   await ada.signInAsDevUser("ada");
+   // Your app's own seed function, which refuses once its data is there.
+   await ada.mutation(api.demo.seed, {}).catch((e) => { if (e.code !== "FAILED_PRECONDITION") throw e; });
+   ```
+
+4. **The launcher and the Fly step**: copy `scripts/demo-server.mjs` and `scripts/demo-artifact.mjs` from this
+   repository unchanged (every starter has the same files), and add the scripts:
+
+   ```json
+   "start:demo": "node scripts/demo-server.mjs",
+   "deploy:demo": "feltkit deploy --target fly && node scripts/demo-artifact.mjs"
+   ```
+
+   If the seed needs other files at runtime, list them: `"feltkitDemo": { "include": ["scripts/seed.ts"] }`.
+
+Then deploy as above: `npm run deploy:demo`, then `npx feltkit fly deploy`.
 
 ## License
 
