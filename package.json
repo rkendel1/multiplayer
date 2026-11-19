@@ -27,6 +27,8 @@
     "dev": "feltkit dev",
     "build": "feltkit build",
     "start": "feltkit start",
+    "start:demo": "node scripts/demo-server.mjs",
+    "deploy:demo": "feltkit deploy --target fly && node scripts/demo-artifact.mjs",
     "test": "feltkit test",
     "inspect": "feltkit inspect",
     "deploy": "feltkit deploy",
